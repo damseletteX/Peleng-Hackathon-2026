@@ -1,0 +1,1 @@
+## here will be cameras configs in json
