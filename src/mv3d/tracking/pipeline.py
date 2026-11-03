@@ -81,10 +81,8 @@ def run_tracking(
 
         with (output / "trajectory.csv").open("w", newline="", encoding="utf-8") as handle:
             table = csv.writer(handle)
-            table.writerow([
-                "frame", "time_s", "x_cm", "y_cm", "z_cm",
-                "meas_x", "meas_y", "meas_z", "weight", "n_cameras", "camera_weights",
-            ])
+            camera_ids = [source.camera_id for source in sources]
+            table.writerow(_csv_header(camera_ids))
             frame_id = 0
             while frames == 0 or frame_id < frames:
                 images = _read_frames(captures)
@@ -109,10 +107,12 @@ def run_tracking(
                 )
                 if position is not None:
                     trajectory.append((frame_id, position.copy(), measurement is not None))
-                    table.writerow(
-                        _trajectory_row(frame_id, fps, position, measurement, views)
-                    )
                     _stamp(canvases, sources, frame_id, position, views)
+                table.writerow(
+                    _trajectory_row(
+                        frame_id, fps, position, measurement, views, camera_ids
+                    )
+                )
                 writers = _write_videos(writers, canvases, sources, output, fps)
                 if position is not None and (frame_id == 0 or frame_id % 10 == 0):
                     print(
@@ -140,14 +140,18 @@ def _load_sources(config_path: Path) -> tuple[float, list[CameraSource]]:
     data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     plane_z = float(data.get("object_plane_z_cm", 300.0))
     sources: list[CameraSource] = []
+    missing: list[str] = []
     for camera_id, cfg in data["cameras"].items():
         video = cfg.get("video")
         calibration = cfg.get("calibration")
-        if not video or not calibration:
+        video_path = Path(video) if video else None
+        if video_path is None or not video_path.is_file() or not calibration:
+            missing.append(camera_id)
             continue
-        video_path = Path(video)
-        if video_path.is_file():
-            sources.append(CameraSource(camera_id, video_path, Path(calibration)))
+        sources.append(CameraSource(camera_id, video_path, Path(calibration)))
+    if missing:
+        names = ", ".join(missing)
+        raise SystemExit(f"Нет видео или калибровки для камер: {names}")
     return plane_z, sources
 
 
@@ -262,25 +266,61 @@ def _fuse(views: list[View], plane_z: float) -> tuple[np.ndarray | None, float]:
     return point, float(sum(weights))
 
 
-def _trajectory_row(frame_id, fps, position, measurement, views) -> list[object]:
+def _csv_header(camera_ids: list[str]) -> list[str]:
+    header = [
+        "frame", "time_s", "x_cm", "y_cm", "z_cm",
+        "meas_x", "meas_y", "meas_z", "weight", "n_cameras",
+    ]
+    for camera_id in camera_ids:
+        header.extend([
+            f"{camera_id}_score",
+            f"{camera_id}_weight",
+            f"{camera_id}_u",
+            f"{camera_id}_v",
+            f"{camera_id}_x1",
+            f"{camera_id}_y1",
+            f"{camera_id}_x2",
+            f"{camera_id}_y2",
+        ])
+    return header
+
+
+def _trajectory_row(frame_id, fps, position, measurement, views, camera_ids) -> list[object]:
     if measurement is None:
         meas = ["", "", ""]
     else:
         meas = [round(float(v), 2) for v in measurement]
-    weights = ";".join(
-        f"{view.camera_id}:{view.weight:.4f}" for view in views
-    )
-    return [
+    if position is None:
+        xyz = ["", "", ""]
+    else:
+        xyz = [round(float(v), 2) for v in position]
+    by_camera = {view.camera_id: view for view in views}
+    row: list[object] = [
         frame_id,
         round(frame_id / fps, 6),
-        round(float(position[0]), 2),
-        round(float(position[1]), 2),
-        round(float(position[2]), 2),
+        *xyz,
         *meas,
         round(float(sum(view.weight for view in views)), 5),
         len(views),
-        weights,
     ]
+    for camera_id in camera_ids:
+        view = by_camera.get(camera_id)
+        if view is None:
+            row.extend(["", "", "", "", "", "", "", ""])
+            continue
+        x1, y1, x2, y2 = view.detection.bbox
+        u, v = view.pixel
+        row.extend([
+            round(view.detection.score, 5),
+            round(view.weight, 5),
+            round(float(u), 2),
+            round(float(v), 2),
+            round(x1, 2),
+            round(y1, 2),
+            round(x2, 2),
+            round(y2, 2),
+        ])
+    return row
 
 
 def _stamp(canvases, sources, frame_id, position, views):
