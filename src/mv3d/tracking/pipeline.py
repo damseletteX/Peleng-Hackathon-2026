@@ -11,13 +11,13 @@ import numpy as np
 import yaml
 
 from mv3d.calibration.camera_model import Camera, load_camera_track
-from mv3d.detection.detector import Detection, VehicleDetector
+from mv3d.detection.detector import Detection, VehicleDetector, select_truck_boxes
 from mv3d.detection.keypoints import reference_pixel
 from mv3d.detection.quality import observation_weight
 from mv3d.geometry.triangulate import intersect_ray_plane, triangulate_points
+from mv3d.tracking.boxes import BoxKeeper
 from mv3d.tracking.motion import TrajectoryFilter
 from mv3d.tracking.tracks import (
-    coasting_boxes,
     detection_from_supervision,
     detections_to_supervision,
     make_truck_tracker,
@@ -80,6 +80,7 @@ def run_tracking(
         fps = _fps(captures[0])
         dt = 1.0 / fps
         trackers = [make_truck_tracker(fps) for _ in sources]
+        keepers = [BoxKeeper() for _ in sources]
         poses = [
             load_camera_track(source.calibration, source.camera_id) for source in sources
         ]
@@ -88,7 +89,8 @@ def run_tracking(
         trajectory: list[tuple[int, np.ndarray, bool]] = []
 
         with ExitStack() as stack:
-            common, per_camera = _open_track_tables(output, sources, stack)
+            common, per_camera, errors = _open_track_tables(output, sources, stack)
+            gt = _load_gt()
             frame_id = 0
             while frames == 0 or frame_id < frames:
                 images = _read_frames(captures)
@@ -99,6 +101,7 @@ def run_tracking(
                     sources,
                     poses,
                     trackers,
+                    keepers,
                     detector,
                     frame_id,
                     motion,
@@ -119,6 +122,8 @@ def run_tracking(
                 _write_track_rows(
                     common, per_camera, sources, views, frame_id, position, plane_z
                 )
+                truth = gt.get(frame_id)
+                errors.writerow([frame_id, *_error_cells(position, truth)])
                 writers = _write_videos(writers, canvases, sources, output, fps)
                 if position is not None and (frame_id == 0 or frame_id % 10 == 0):
                     print(
@@ -131,6 +136,7 @@ def run_tracking(
                 raise RuntimeError("Не прочитан ни один кадр.")
         _write_topdown(output / "trajectory_topdown.png", trajectory)
         _report_gt(trajectory)
+        print(f"Ошибки по кадрам: {(output / 'errors.csv').resolve()}", flush=True)
     finally:
         for capture in captures:
             capture.release()
@@ -178,14 +184,22 @@ def _read_frames(captures: list[cv2.VideoCapture]) -> list[np.ndarray] | None:
     return frames
 
 
-def _observe(images, sources, poses, trackers, detector, frame_id, motion, dt):
+def _observe(images, sources, poses, trackers, keepers, detector, frame_id, motion, dt):
     views: list[View] = []
     canvases: list[np.ndarray] = []
     predicted = motion.peek(dt)
-    for image, source, pose_track, tracker in zip(images, sources, poses, trackers, strict=True):
+    for image, source, pose_track, tracker, keeper in zip(
+        images, sources, poses, trackers, keepers, strict=True
+    ):
         camera = pose_track[min(frame_id, len(pose_track) - 1)]
+        height, width = image.shape[:2]
         found = detector.detect(image)
-        tracked = tracker.update(detections_to_supervision(found))
+        if keeper.wants_faint():
+            faint = detector.detect(image, score_threshold=0.05)
+            found = select_truck_boxes(found + faint, float(width * height))
+        stable = keeper.update(found, width, height)
+        live = [] if keeper.last_live is None else [keeper.last_live]
+        tracked = tracker.update(detections_to_supervision(live))
         canvas = image.copy()
         chosen = _choose(
             _candidates(tracked, image, camera, _image_motion(camera, motion)),
@@ -194,9 +208,8 @@ def _observe(images, sources, poses, trackers, detector, frame_id, motion, dt):
         )
         if chosen is not None:
             views.append(chosen)
-            _draw_detection(canvas, chosen)
-        for track_id, box in coasting_boxes(tracker):
-            _draw_box(canvas, box, f"truck ID:{track_id} hold", (180, 180, 180), held=True)
+        if stable is not None:
+            _draw_stable(canvas, stable, keeper.last_live)
         canvases.append(canvas)
     return views, canvases
 
@@ -390,7 +403,12 @@ def _open_track_tables(output: Path, sources: list[CameraSource], stack: ExitSta
         writer = csv.writer(handle, delimiter=";")
         writer.writerow(header)
         per_camera[source.camera_id] = writer
-    return common, per_camera
+    error_handle = stack.enter_context(
+        (output / "errors.csv").open("w", newline="", encoding="utf-8")
+    )
+    errors = csv.writer(error_handle, delimiter=";")
+    errors.writerow(["Frame", "Err_X", "Err_Y", "Err_Z", "Dist_cm"])
+    return common, per_camera, errors
 
 
 def _write_track_rows(common, per_camera, sources, views, frame_id, position, plane_z) -> None:
@@ -403,6 +421,33 @@ def _write_track_rows(common, per_camera, sources, views, frame_id, position, pl
             point = intersect_ray_plane(origin, direction, plane_z=plane_z)
         per_camera[source.camera_id].writerow([frame_id, *_loc_cells(point)])
     common.writerow([frame_id, *_loc_cells(position)])
+
+
+def _error_cells(position: np.ndarray | None, truth: np.ndarray | None) -> list[str]:
+    if position is None or truth is None:
+        return ["", "", "", ""]
+    delta = np.asarray(position, dtype=np.float64) - np.asarray(truth, dtype=np.float64)
+    distance = float(np.linalg.norm(delta))
+    return [f"{float(value):.4f}" for value in delta] + [f"{distance:.4f}"]
+
+
+def _load_gt() -> dict[int, np.ndarray]:
+    gt: dict[int, np.ndarray] = {}
+    if not _GT_PATH.is_file():
+        return gt
+    with _GT_PATH.open(encoding="utf-8", errors="replace") as handle:
+        next(handle, None)
+        for line in handle:
+            parts = [item.strip() for item in line.split(";")]
+            if len(parts) < 4 or not parts[0]:
+                continue
+            try:
+                gt[int(float(parts[0]))] = np.array(
+                    [float(parts[1]), float(parts[2]), float(parts[3])], dtype=np.float64
+                )
+            except ValueError:
+                continue
+    return gt
 
 
 def _loc_cells(point: np.ndarray | None) -> list[str]:
@@ -434,6 +479,14 @@ def _write_videos(writers, canvases, sources, output, fps):
             ready[index] = writer
         ready[index].write(canvas)
     return ready
+
+
+def _draw_stable(canvas: np.ndarray, box: np.ndarray, live: Detection | None) -> None:
+    if live is None:
+        label = "truck"
+    else:
+        label = f"truck {live.score:.2f}"
+    _draw_box(canvas, box, label, (0, 210, 255), held=live is None)
 
 
 def _draw_detection(canvas: np.ndarray, view: View) -> None:

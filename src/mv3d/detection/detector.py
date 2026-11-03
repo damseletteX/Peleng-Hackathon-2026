@@ -84,12 +84,17 @@ class VehicleDetector:
         factory = getattr(rfdetr, _MODEL_FACTORIES[model_size])
         self.model = factory()
 
-    def detect(self, image_bgr: np.ndarray) -> list[Detection]:
+    def detect(
+        self,
+        image_bgr: np.ndarray,
+        score_threshold: float | None = None,
+    ) -> list[Detection]:
         import cv2
         from rfdetr.assets.coco_classes import COCO_CLASSES
 
+        threshold = self.score_threshold if score_threshold is None else score_threshold
         rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
-        raw = self.model.predict(rgb, threshold=self.score_threshold)
+        raw = self.model.predict(rgb, threshold=threshold)
         if raw.xyxy is None or len(raw.xyxy) == 0:
             return []
 
