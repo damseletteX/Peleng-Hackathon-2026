@@ -6,7 +6,7 @@ from pathlib import Path
 import cv2
 
 from mv3d.calibration.camera_model import load_camera_from_csv
-from mv3d.detection.detector import MODEL_CHOICES, VehicleDetector
+from mv3d.detection.detector import VehicleDetector
 from mv3d.detection.localize import localize_detection
 from mv3d.detection.quality import observation_weight
 from mv3d.detection.visualize import draw_detection
@@ -36,12 +36,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     detect.add_argument("--out", type=str, default=None)
     detect.add_argument("--score", type=float, default=0.15)
     detect.add_argument("--plane-z", type=float, default=300.0)
-    detect.add_argument(
-        "--model",
-        default="medium",
-        choices=MODEL_CHOICES,
-        help="RF-DETR: nano, small, medium, large. YOLO: yolov8n, yolo26m, yolo11x",
-    )
 
     _add_run_args(
         sub.add_parser("csv", help="Только CSV: быстрее, ролики не пишутся"),
@@ -67,6 +61,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Эталон Frame;Loc_X;Loc_Y;Loc_Z",
     )
     score.add_argument("--out", default=None, help="Куда писать errors.csv")
+
+    train = sub.add_parser(
+        "train",
+        help="Аугментация и дообучение RF-DETR nano, по одной камере в valid",
+    )
+    train.add_argument("--config", default="configs/cameras.yml")
+    train.add_argument("--stride", type=int, default=6, help="Брать каждый N-й кадр")
+    train.add_argument("--score", type=float, default=0.25, help="Порог псевдоразметки")
+    train.add_argument("--epochs", type=int, default=8)
+    train.add_argument("--batch-size", type=int, default=4)
+    train.add_argument("--dataset", default="data/truck")
+    train.add_argument("--output", default="outputs/rfdetr_nano")
+    train.add_argument("--weights", default="weights/rfdetr-nano-truck.pth")
+    train.add_argument("--seed", type=int, default=0)
     return parser.parse_args(argv)
 
 
@@ -80,12 +88,6 @@ def _add_run_args(
     parser.add_argument("--config", default="configs/cameras.yml")
     parser.add_argument("--frames", type=int, default=0, help="0 — все кадры")
     parser.add_argument("--score", type=float, default=0.15)
-    parser.add_argument(
-        "--model",
-        default="medium",
-        choices=MODEL_CHOICES,
-        help="RF-DETR: nano, small, medium, large. YOLO: yolov8n, yolo26m, yolo11x",
-    )
     parser.add_argument("--out", default="outputs")
 
 
@@ -109,7 +111,7 @@ def _run_detect(args: argparse.Namespace) -> int:
     if not source.exists():
         raise SystemExit(f"Не найден файл: {source}")
 
-    detector = VehicleDetector(score_threshold=args.score, model_size=args.model)
+    detector = VehicleDetector(score_threshold=args.score)
     camera = load_camera_from_csv(CAMERA_CSV[args.camera], args.camera, frame=args.frame)
 
     image = cv2.imread(str(source))
@@ -183,10 +185,32 @@ def _run_track(args: argparse.Namespace) -> int:
         config_path=args.config,
         frames=args.frames,
         score_threshold=args.score,
-        model_size=args.model,
         output_root=args.out,
         write_csv=args.write_csv,
         write_video=args.write_video,
+    )
+    return 0
+
+
+def _run_train(args: argparse.Namespace) -> int:
+    from mv3d.detection.train import train_nano
+
+    if args.stride < 1:
+        raise SystemExit("--stride должен быть >= 1")
+    if args.epochs < 1:
+        raise SystemExit("--epochs должен быть >= 1")
+    if args.batch_size < 1:
+        raise SystemExit("--batch-size должен быть >= 1")
+    train_nano(
+        config_path=args.config,
+        stride=args.stride,
+        score_threshold=args.score,
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        dataset_dir=args.dataset,
+        output_dir=args.output,
+        weights_out=args.weights,
+        seed=args.seed,
     )
     return 0
 
@@ -201,6 +225,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_track(args)
     if args.command == "score":
         return _run_score(args)
+    if args.command == "train":
+        return _run_train(args)
     parse_args(["--help"])
     return 0
 

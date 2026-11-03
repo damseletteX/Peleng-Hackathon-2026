@@ -56,7 +56,6 @@ def run_tracking(
     config_path: str | Path = "configs/cameras.yml",
     frames: int = 0,
     score_threshold: float = 0.15,
-    model_size: str = "medium",
     output_root: str | Path = "outputs",
     write_csv: bool = True,
     write_video: bool = True,
@@ -78,10 +77,10 @@ def run_tracking(
         pieces.append("CSV")
     if write_video:
         pieces.append("видео")
-    print(f"Выход: {', '.join(pieces)}. Модель: {model_size}.", flush=True)
-    print(f"\nЗагрузка модели {model_size}. Первый запуск скачивает веса.", flush=True)
+    print(f"Выход: {', '.join(pieces)}. Модель: RF-DETR nano.", flush=True)
+    print("\nЗагрузка RF-DETR nano.", flush=True)
 
-    detector = VehicleDetector(score_threshold=score_threshold, model_size=model_size)
+    detector = VehicleDetector(score_threshold=score_threshold)
     captures = [cv2.VideoCapture(str(source.video)) for source in sources]
     writers: list[cv2.VideoWriter | None] = [None] * len(sources)
     try:
