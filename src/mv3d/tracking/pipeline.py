@@ -135,6 +135,9 @@ def run_tracking(
             if frame_id == 0:
                 raise RuntimeError("Не прочитан ни один кадр.")
         _write_topdown(output / "trajectory_topdown.png", trajectory)
+        plot = output / "coordinates_time.png"
+        write_coordinate_plot(plot, [(frame, xyz) for frame, xyz, _ in trajectory], gt)
+        print(f"Графики: {plot.resolve()}", flush=True)
         _report_gt(trajectory)
         print(f"Ошибки по кадрам: {(output / 'errors.csv').resolve()}", flush=True)
     finally:
@@ -431,11 +434,119 @@ def _error_cells(position: np.ndarray | None, truth: np.ndarray | None) -> list[
     return [f"{float(value):.4f}" for value in delta] + [f"{distance:.4f}"]
 
 
-def _load_gt() -> dict[int, np.ndarray]:
+def score_coordinates(
+    track: str | Path,
+    gt_path: str | Path | None = None,
+    out: str | Path | None = None,
+) -> Path:
+    """Покадровые ошибки по уже записанному track.csv, без детектора."""
+    track_path = Path(track)
+    if track_path.is_dir():
+        track_path = track_path / "track.csv"
+    if not track_path.is_file():
+        raise SystemExit(f"Нет файла координат: {track_path}")
+
+    reference = _GT_PATH if gt_path is None else Path(gt_path)
+    gt = _load_gt(reference)
+    destination = track_path.with_name("errors.csv") if out is None else Path(out)
+    rows = _read_track(track_path)
+    squared: list[float] = []
+    with destination.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle, delimiter=";")
+        writer.writerow(["Frame", "Err_X", "Err_Y", "Err_Z", "Dist_cm"])
+        for frame_id, position in rows:
+            truth = gt.get(frame_id)
+            writer.writerow([frame_id, *_error_cells(position, truth)])
+            if position is not None and truth is not None:
+                squared.append(float(np.sum((position - truth) ** 2)))
+    plot = destination.with_name("coordinates_time.png")
+    write_coordinate_plot(plot, rows, gt)
+    print(f"Графики: {plot.resolve()}", flush=True)
+    if squared:
+        mse = float(np.mean(squared))
+        print(
+            f"MSE: {mse:.0f} см², RMSE {np.sqrt(mse):.1f} см, кадров {len(squared)}",
+            flush=True,
+        )
+    else:
+        print("Нет кадров, где есть и координата, и целый эталон.", flush=True)
+    print(f"Ошибки по кадрам: {destination.resolve()}", flush=True)
+    return destination
+
+
+def write_coordinate_plot(
+    path: Path,
+    rows: list[tuple[int, np.ndarray | None]],
+    gt: dict[int, np.ndarray],
+) -> None:
+    """X, Y и Z от номера кадра. Оценка синяя, эталон зелёный."""
+    usable = [(frame, point) for frame, point in rows if point is not None]
+    if len(usable) < 2:
+        return
+    width, panel, gap = 960, 220, 16
+    canvas = np.full((panel * 3 + gap * 4, width, 3), 255, dtype=np.uint8)
+    frames = [frame for frame, _ in usable]
+    frame_min, frame_max = min(frames), max(frames)
+    for axis, name in enumerate(("X", "Y", "Z")):
+        top = gap + axis * (panel + gap)
+        estimate = [(frame, float(point[axis])) for frame, point in usable]
+        truth = [(frame, float(gt[frame][axis])) for frame, _ in usable if frame in gt]
+        _draw_series(canvas, estimate, truth, frame_min, frame_max, top, panel - 8, width)
+        cv2.putText(
+            canvas, name, (8, top + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (40, 40, 40), 2
+        )
+    cv2.imwrite(str(path), canvas)
+
+
+def _draw_series(canvas, estimate, truth, frame_min, frame_max, top, height, width) -> None:
+    values = [value for _, value in estimate] + [value for _, value in truth]
+    if not values:
+        return
+    low, high = min(values), max(values)
+    if high - low < 1.0:
+        high = low + 1.0
+    span = max(frame_max - frame_min, 1)
+
+    def pixel(frame: int, value: float) -> tuple[int, int]:
+        x = 50 + (frame - frame_min) / span * (width - 80)
+        y = top + height - 16 - (value - low) / (high - low) * (height - 32)
+        return round(x), round(y)
+
+    def line(points: list[tuple[int, float]], color: tuple[int, int, int]) -> None:
+        if len(points) < 2:
+            return
+        poly = np.array([pixel(frame, value) for frame, value in points], dtype=np.int32)
+        cv2.polylines(canvas, [poly], False, color, 2)
+
+    line(truth, (80, 160, 80))
+    line(estimate, (200, 80, 0))
+
+
+def _read_track(path: Path) -> list[tuple[int, np.ndarray | None]]:
+    rows: list[tuple[int, np.ndarray | None]] = []
+    with path.open(encoding="utf-8", errors="replace") as handle:
+        next(handle, None)
+        for line in handle:
+            parts = [item.strip() for item in line.split(";")]
+            if not parts or not parts[0]:
+                continue
+            frame_id = int(float(parts[0]))
+            position = None
+            if len(parts) >= 4 and all(parts[1:4]):
+                try:
+                    position = np.array([float(parts[1]), float(parts[2]), float(parts[3])])
+                except ValueError:
+                    position = None
+            rows.append((frame_id, position))
+    return rows
+
+
+def _load_gt(path: Path | None = None) -> dict[int, np.ndarray]:
     gt: dict[int, np.ndarray] = {}
-    if not _GT_PATH.is_file():
+    source = _GT_PATH if path is None else path
+    if not source.is_file():
         return gt
-    with _GT_PATH.open(encoding="utf-8", errors="replace") as handle:
+    with source.open(encoding="utf-8", errors="replace") as handle:
         next(handle, None)
         for line in handle:
             parts = [item.strip() for item in line.split(";")]

@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import numpy as np
 
+# Без измерения скорость затухает: за 5 с остаётся половина.
+# Иначе точка десятки секунд летит по прямой и уходит от дороги.
+_COAST_HALF_LIFE_S = 5.0
+
 
 class TrajectoryFilter:
     """Фильтр постоянной скорости для одной 3D-траектории, сантиметры.
@@ -48,7 +52,13 @@ class TrajectoryFilter:
             self._predict(dt)
         if measurement is not None and weight > 0:
             return self._update(np.asarray(measurement, dtype=np.float64), weight)
+        self._fade_unseen_speed(dt)
         return self.position
+
+    def _fade_unseen_speed(self, dt: float) -> None:
+        if self.x is None:
+            return
+        self.x[3:6] *= 0.5 ** (dt / _COAST_HALF_LIFE_S)
 
     def _predict(self, dt: float) -> None:
         assert self.x is not None and self.p is not None

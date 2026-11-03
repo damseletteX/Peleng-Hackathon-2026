@@ -52,6 +52,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         choices=("small", "medium", "large"),
     )
     track.add_argument("--out", default="outputs")
+
+    score = sub.add_parser("score", help="Покадровые ошибки по готовому track.csv")
+    score.add_argument("track", help="track.csv или папка прогона")
+    score.add_argument(
+        "--gt",
+        default="configs/calibration/object_transform_SM_AA_track.csv",
+        help="Эталон Frame;Loc_X;Loc_Y;Loc_Z",
+    )
+    score.add_argument("--out", default=None, help="Куда писать errors.csv")
     return parser.parse_args(argv)
 
 
@@ -133,6 +142,13 @@ def _iter_video_frames(path: Path, start: int, max_frames: int):
         cap.release()
 
 
+def _run_score(args: argparse.Namespace) -> int:
+    from mv3d.tracking.pipeline import score_coordinates
+
+    score_coordinates(args.track, gt_path=args.gt, out=args.out)
+    return 0
+
+
 def _run_track(args: argparse.Namespace) -> int:
     from mv3d.tracking.pipeline import run_tracking
 
@@ -156,6 +172,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_detect(args)
     if args.command == "track":
         return _run_track(args)
+    if args.command == "score":
+        return _run_score(args)
     parse_args(["--help"])
     return 0
 
