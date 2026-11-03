@@ -25,6 +25,12 @@ from mv3d.tracking.tracks import (
 )
 
 _GT_PATH = Path("configs/calibration/object_transform_SM_AA_track.csv")
+# Монокулярные точки одной и той же машины на плоскости должны лежать рядом.
+_MONO_GATE_CM = 8000.0
+# Триангуляция дальше этого от луча согласованной камеры не используется.
+_TRI_AGREE_CM = 5000.0
+# Прогноз должен попасть рядом с точкой на боксе, иначе это другая камера.
+_REPROJ_PX = 160.0
 
 
 @dataclass(frozen=True)
@@ -78,6 +84,7 @@ def run_tracking(
             load_camera_track(source.calibration, source.camera_id) for source in sources
         ]
         motion = TrajectoryFilter()
+        locked_id: str | None = None
         trajectory: list[tuple[int, np.ndarray, bool]] = []
 
         with ExitStack() as stack:
@@ -97,7 +104,9 @@ def run_tracking(
                     motion,
                     dt,
                 )
-                measurement, weight = _fuse(views, plane_z)
+                measurement, weight, locked_id = _fuse(
+                    views, plane_z, motion.peek(dt), locked_id
+                )
                 has_measurement = measurement is not None
                 position = motion.step(
                     measurement if has_measurement else None,
@@ -243,24 +252,126 @@ def _choose(candidates: list[View], camera: Camera, predicted: np.ndarray | None
     return max(pool, key=preference)
 
 
-def _fuse(views: list[View], plane_z: float) -> tuple[np.ndarray | None, float]:
-    if not views:
-        return None, 0.0
-    positive = [view for view in views if view.weight > 0]
-    weights = [view.weight for view in positive]
-    if len(positive) >= 2:
-        point = triangulate_points(
-            [view.camera for view in positive],
-            [view.pixel for view in positive],
+def _fuse(
+    views: list[View],
+    plane_z: float,
+    predicted: np.ndarray | None,
+    locked_id: str | None = None,
+) -> tuple[np.ndarray | None, float, str | None]:
+    """Сложить только камеры, в чьём боксе лежит уже найденный грузовик.
+
+    База — луч одной такой камеры. Триангуляция заменяет его, только если
+    сошлась с этим лучом: чужой вид не уводит точку на сотни метров.
+    """
+    chosen, locked_id = _views_for_fusion(views, plane_z, predicted, locked_id)
+    if not chosen:
+        return None, 0.0, locked_id
+    weights = [view.weight for view in chosen]
+    point = _closest_monocular(chosen, plane_z, predicted)
+    if point is None:
+        return None, 0.0, locked_id
+    if len(chosen) >= 2:
+        triangulated = triangulate_points(
+            [view.camera for view in chosen],
+            [view.pixel for view in chosen],
             weights,
         )
-    elif len(positive) == 1:
-        view = max(views, key=lambda item: item.weight)
-        origin, direction = view.camera.ray_from_pixel(view.pixel)
-        point = intersect_ray_plane(origin, direction, plane_z=plane_z)
+        if np.all(np.isfinite(triangulated)) and _agree(triangulated, point):
+            point = triangulated
+    return point, float(sum(weights)), locked_id
+
+
+def _views_for_fusion(
+    views: list[View],
+    plane_z: float,
+    predicted: np.ndarray | None,
+    locked_id: str | None = None,
+) -> tuple[list[View], str | None]:
+    positive = [view for view in views if view.weight > 0]
+    if not positive:
+        return [], locked_id
+    if predicted is None:
+        chosen = _cluster_monocular(positive, plane_z)
+        if len(chosen) == 1:
+            locked_id = chosen[0].camera_id
+        return chosen, locked_id
+    ranked = sorted(
+        ((_reprojection_px(view, predicted), view) for view in positive),
+        key=lambda item: item[0],
+    )
+    current = [view for error, view in ranked if view.camera_id == locked_id and error <= _REPROJ_PX]
+    if current:
+        primary = current[0]
+    elif ranked[0][0] <= 50.0:
+        primary = ranked[0][1]
+        locked_id = primary.camera_id
     else:
-        point = None
-    return point, float(sum(weights))
+        return [], locked_id
+    extras = [
+        view
+        for error, view in ranked
+        if view.camera_id != primary.camera_id and error <= 40.0
+    ]
+    return [primary, *extras], locked_id
+
+
+def _reprojection_px(view: View, point: np.ndarray) -> float:
+    ahead = view.camera.R @ (np.asarray(point, dtype=np.float64) - view.camera.center)
+    if float(ahead[2]) <= 0:
+        return float("inf")
+    u, v = (float(value) for value in view.camera.project(point))
+    return float(np.hypot(u - view.pixel[0], v - view.pixel[1]))
+
+
+def _agree(left: np.ndarray, right: np.ndarray) -> bool:
+    return float(np.hypot(left[0] - right[0], left[1] - right[1])) <= _TRI_AGREE_CM
+
+
+def _closest_monocular(
+    views: list[View],
+    plane_z: float,
+    predicted: np.ndarray | None,
+) -> np.ndarray | None:
+    best_point = None
+    best_key = None
+    for view in views:
+        point = _monocular_point(view, plane_z)
+        if point is None:
+            continue
+        if predicted is None:
+            key = -view.weight
+        else:
+            key = float(np.hypot(point[0] - predicted[0], point[1] - predicted[1]))
+        if best_key is None or key < best_key:
+            best_key = key
+            best_point = point
+    return best_point
+
+
+def _cluster_monocular(views: list[View], plane_z: float) -> list[View]:
+    located: list[tuple[View, np.ndarray]] = []
+    for view in views:
+        point = _monocular_point(view, plane_z)
+        if point is not None:
+            located.append((view, point))
+    if not located:
+        return []
+
+    def group(index: int) -> list[tuple[View, np.ndarray]]:
+        origin = located[index][1]
+        return [
+            item
+            for item in located
+            if np.hypot(item[1][0] - origin[0], item[1][1] - origin[1]) <= _MONO_GATE_CM
+        ]
+
+    best = max(range(len(located)), key=lambda i: (len(group(i)), located[i][0].weight))
+    return [view for view, _ in group(best)]
+
+
+def _monocular_point(view: View, plane_z: float) -> np.ndarray | None:
+    origin, direction = view.camera.ray_from_pixel(view.pixel)
+    return intersect_ray_plane(origin, direction, plane_z=plane_z)
 
 
 def _open_track_tables(output: Path, sources: list[CameraSource], stack: ExitStack):

@@ -76,7 +76,16 @@ class TrajectoryFilter:
         gain = self.p @ observation.T @ np.linalg.inv(innovation_cov)
         self.x = self.x + gain @ innovation
         self.p = (np.eye(6) - gain @ observation) @ self.p
+        self._limit_speed()
         return self.x[:3].copy()
+
+    def _limit_speed(self) -> None:
+        """Грузовик не разгоняется быстрее 30 м/с и не взлетает."""
+        assert self.x is not None
+        horizontal = float(np.hypot(self.x[3], self.x[4]))
+        if horizontal > 3000.0:
+            self.x[3:5] *= 3000.0 / horizontal
+        self.x[5] = float(np.clip(self.x[5], -150.0, 150.0))
 
 
 def _along_road(state: np.ndarray, innovation: np.ndarray) -> np.ndarray:
