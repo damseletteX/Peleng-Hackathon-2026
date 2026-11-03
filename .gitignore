@@ -62,17 +62,6 @@ processed_data/
 annotations/
 labels/
 
-# Video and image recordings
-*.mp4
-*.avi
-*.mov
-*.mkv
-*.webm
-*.mpeg
-*.mpg
-*.m4v
-*.hevc
-
 # Model weights and checkpoints
 *.pt
 *.pth
