@@ -3,8 +3,18 @@ name = "peleng-hackathon-2026"
 version = "0.1.0"
 description = "Computer vision system for analyzing video from a few calibrated cameras."
 readme = "README.md"
-requires-python = ">=3.14"
-dependencies = []
+requires-python = ">=3.12"
+dependencies = [
+    "opencv-python>=5.0",
+    "pytest>=9.2.0",
+    "numpy>=2.5",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "ruff",
+]
 
 [project.scripts]
 peleng-hackathon-2026 = "peleng_hackathon_2026:main"

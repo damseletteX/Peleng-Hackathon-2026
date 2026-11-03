@@ -1,0 +1,111 @@
+
+# ==============================
+# Python
+# ==============================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+.eggs/
+build/
+dist/
+wheels/
+pip-wheel-metadata/
+
+# ==============================
+# Virtual environments
+# ==============================
+.venv/
+venv/
+env/
+ENV/
+
+# Testing and coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml/
+
+# Linters and type checkers
+.ruff_cache/
+.mypy_cache/
+.pytype/
+.pyre/
+
+# IDEs and editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment variables / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+credentials/
+
+# Computer vision datasets
+data/
+datasets/
+raw_data/
+processed_data/
+annotations/
+labels/
+
+# Video and image recordings
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.webm
+*.mpeg
+*.mpg
+*.m4v
+*.hevc
+
+# Model weights and checkpoints
+*.pt
+*.pth
+*.onnx
+*.engine
+*.weights
+*.ckpt
+*.safetensors
+
+# ML experiments and logs
+runs/
+wandb/
+mlruns/
+lightning_logs/
+tensorboard/
+logs/
+outputs/
+checkpoints/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+*.bak
+*.cache
+tmp/
+temp/
+.cache/
+
+# OS
+Thumbs.db
+Desktop.ini
