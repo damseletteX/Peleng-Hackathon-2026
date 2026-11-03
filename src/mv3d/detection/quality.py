@@ -1,12 +1,3 @@
-<<<<<<< HEAD
-Detection(
-    bbox=(x1, y1, x2, y2),
-    score=0.93,
-    label="truck",
-    label_id=8,
-    quality_score=0.82,
-)
-=======
 from __future__ import annotations
 
 import cv2
@@ -75,4 +66,3 @@ def observation_weight(
     sharpness = sharpness_weight(image_bgr, detection.bbox)
     score = float(np.clip(detection.score, 0.0, 1.0))
     return score * sharpness * visibility, sharpness, visibility
->>>>>>> a845abdf803650b21ea2d9221a222c5ddafbff9a

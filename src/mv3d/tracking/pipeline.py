@@ -78,7 +78,6 @@ def run_tracking(
         ]
         motion = TrajectoryFilter()
         trajectory: list[tuple[int, np.ndarray, bool]] = []
-        missed = 0
 
         with (output / "trajectory.csv").open("w", newline="", encoding="utf-8") as handle:
             table = csv.writer(handle)
@@ -103,17 +102,11 @@ def run_tracking(
                 )
                 measurement, weight = _fuse(views, plane_z)
                 has_measurement = measurement is not None
-                if has_measurement and missed > 60:
-                    motion = TrajectoryFilter()
-                if has_measurement or missed <= 60:
-                    position = motion.step(
-                        measurement if has_measurement else None,
-                        weight if has_measurement else 0.0,
-                        dt,
-                    )
-                else:
-                    position = None
-                missed = 0 if has_measurement else missed + 1
+                position = motion.step(
+                    measurement if has_measurement else None,
+                    weight if has_measurement else 0.0,
+                    dt,
+                )
                 if position is not None:
                     trajectory.append((frame_id, position.copy(), measurement is not None))
                     table.writerow(
@@ -372,25 +365,26 @@ def _report_gt(trajectory: list[tuple[int, np.ndarray]]) -> None:
                 )
             except ValueError:
                 continue
-    measured = []
-    predicted = []
+    squared_measured: list[float] = []
+    squared_all: list[float] = []
     for frame, xyz, has_measurement in trajectory:
         if frame not in gt:
             continue
-        error = float(np.linalg.norm(xyz[:2] - gt[frame][:2]))
+        squared = float(np.sum((xyz - gt[frame]) ** 2))
+        squared_all.append(squared)
         if has_measurement:
-            measured.append(error)
-        else:
-            predicted.append(error)
-    if measured:
+            squared_measured.append(squared)
+    if squared_all:
+        mse = float(np.mean(squared_all))
         print(
-            f"Ошибка XY на кадрах с детекцией: средняя {np.mean(measured):.1f} см, "
-            f"медиана {np.median(measured):.1f} см, кадров {len(measured)}",
+            f"MSE по кадрам с целым эталоном: {mse:.0f} см², "
+            f"RMSE {np.sqrt(mse):.1f} см, кадров {len(squared_all)}",
             flush=True,
         )
-    if predicted:
+    if squared_measured:
+        mse_measured = float(np.mean(squared_measured))
         print(
-            f"Ошибка XY на кадрах только по прогнозу: средняя {np.mean(predicted):.1f} см, "
-            f"кадров {len(predicted)}",
+            f"MSE на кадрах с детекцией: {mse_measured:.0f} см², "
+            f"RMSE {np.sqrt(mse_measured):.1f} см, кадров {len(squared_measured)}",
             flush=True,
         )

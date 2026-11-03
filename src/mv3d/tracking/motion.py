@@ -71,12 +71,28 @@ class TrajectoryFilter:
         observation[0, 0] = observation[1, 1] = observation[2, 2] = 1.0
         variance = (self.meas_std_cm ** 2) / max(weight, 1e-3)
         noise = np.eye(3, dtype=np.float64) * variance
-        innovation = measurement - observation @ self.x
+        innovation = _along_road(self.x, measurement - observation @ self.x)
         innovation_cov = observation @ self.p @ observation.T + noise
         gain = self.p @ observation.T @ np.linalg.inv(innovation_cov)
         self.x = self.x + gain @ innovation
         self.p = (np.eye(6) - gain @ observation) @ self.p
         return self.x[:3].copy()
+
+
+def _along_road(state: np.ndarray, innovation: np.ndarray) -> np.ndarray:
+    """Оставить продольный сдвиг и ослабить прыжок поперёк пройденного пути.
+
+    Путь уже проеханных точек — это дорога, по которой едет грузовик.
+    Боковой выброс детекции не должен уводить траекторию с неё.
+    """
+    heading = np.array([state[3], state[4], 0.0], dtype=np.float64)
+    speed = float(np.hypot(heading[0], heading[1]))
+    if speed < 100.0:
+        return innovation
+    heading /= speed
+    along = float(np.dot(innovation, heading)) * heading
+    cross = innovation - along
+    return along + 0.25 * cross
 
 
 def _process_noise(dt: float, accel_std: float) -> np.ndarray:

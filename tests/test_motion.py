@@ -19,6 +19,18 @@ def test_low_weight_moves_the_trajectory_less():
     assert trusted_next[0] > cautious_next[0]
 
 
+def test_sideways_jump_stays_near_the_driven_path():
+    motion = TrajectoryFilter()
+    motion.step(np.array([0.0, 0.0, 300.0]), 1.0, 0.1)
+    for index in range(1, 12):
+        motion.step(np.array([index * 50.0, 0.0, 300.0]), 1.0, 0.1)
+    before = motion.position
+    assert before is not None
+    after = motion.step(np.array([before[0] + 50.0, 500.0, 300.0]), 1.0, 0.1)
+    assert after is not None
+    assert abs(after[1]) < 250.0
+
+
 def test_missing_measurement_keeps_a_position():
     motion = TrajectoryFilter()
     first = motion.step(np.array([10.0, 20.0, 300.0]), 1.0, 0.1)
