@@ -149,6 +149,40 @@ def make_project_intrinsics(
     }
 
 
+def load_camera_track(
+    path: str | Path,
+    camera_id: str,
+    width: int = 1280,
+    height: int = 720,
+) -> list[Camera]:
+    """Поза камеры на каждом кадре CSV."""
+    csv_path = Path(path)
+    with csv_path.open(encoding="utf-8", errors="replace") as handle:
+        header = handle.readline()
+        rows = [line.strip() for line in handle if line.strip()]
+    if not rows:
+        raise ValueError(f"В {csv_path.name} нет кадров.")
+
+    focal_mm = _parse_focal_mm(header, camera_id)
+    intrinsics = CameraIntrinsics(width=width, height=height, focal_mm=focal_mm)
+    cameras: list[Camera] = []
+    for line in rows:
+        parts = line.split(";")
+        center = np.array([float(parts[1]), float(parts[2]), float(parts[3])], dtype=np.float64)
+        roll, pitch, yaw = float(parts[4]), float(parts[5]), float(parts[6])
+        cameras.append(
+            Camera(
+                camera_id=camera_id,
+                intrinsics=intrinsics,
+                center=center,
+                roll_deg=roll,
+                pitch_deg=pitch,
+                yaw_deg=yaw,
+            )
+        )
+    return cameras
+
+
 def load_camera_from_csv(
     path: str | Path,
     camera_id: str,
@@ -156,26 +190,10 @@ def load_camera_from_csv(
     width: int = 1280,
     height: int = 720,
 ) -> Camera:
-    csv_path = Path(path)
-    with csv_path.open(encoding="utf-8", errors="replace") as handle:
-        header = handle.readline()
-        rows = [line.strip() for line in handle if line.strip()]
-
-    focal_mm = _parse_focal_mm(header, camera_id)
-    if frame < 0 or frame >= len(rows):
-        raise ValueError(f"Кадр {frame} отсутствует в {csv_path.name}.")
-
-    parts = rows[frame].split(";")
-    center = np.array([float(parts[1]), float(parts[2]), float(parts[3])], dtype=np.float64)
-    roll, pitch, yaw = float(parts[4]), float(parts[5]), float(parts[6])
-    return Camera(
-        camera_id=camera_id,
-        intrinsics=CameraIntrinsics(width=width, height=height, focal_mm=focal_mm),
-        center=center,
-        roll_deg=roll,
-        pitch_deg=pitch,
-        yaw_deg=yaw,
-    )
+    track = load_camera_track(path, camera_id, width=width, height=height)
+    if frame < 0 or frame >= len(track):
+        raise ValueError(f"Кадр {frame} отсутствует в {Path(path).name}.")
+    return track[frame]
 
 
 def _parse_focal_mm(header: str, camera_id: str) -> float:

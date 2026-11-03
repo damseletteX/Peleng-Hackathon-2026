@@ -3,13 +3,15 @@ image_height: 720
 sensor_width_mm: 23.76
 sensor_height_mm: 13.365
 object_plane_z_cm: 300.0
+# Ролик cam1 совпадает с позой CineCameraActor1: проекция трека лежит на грузовике.
+# configs/cam1.mp4 с этой позой не совпадает. У cam2 и cam4 точка актора
+# ни на одном кадре не попадает в кадр, остальные ролики к позам не привязаны.
 cameras:
   cam1:
-    video: configs/cam1.mp4
+    video: configs/video_2026-11-03_15-40-12.mp4
     calibration: configs/calibration/object_transform_CineCameraActor1.csv
     focal_mm: 35.0
   cam2:
-    video: configs/cam2.mp4
     calibration: configs/calibration/object_transform_CineCameraActor2.csv
     focal_mm: 60.0
   cam3:
