@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+from contextlib import ExitStack
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -79,10 +80,8 @@ def run_tracking(
         motion = TrajectoryFilter()
         trajectory: list[tuple[int, np.ndarray, bool]] = []
 
-        with (output / "trajectory.csv").open("w", newline="", encoding="utf-8") as handle:
-            table = csv.writer(handle)
-            camera_ids = [source.camera_id for source in sources]
-            table.writerow(_csv_header(camera_ids))
+        with ExitStack() as stack:
+            common, per_camera = _open_track_tables(output, sources, stack)
             frame_id = 0
             while frames == 0 or frame_id < frames:
                 images = _read_frames(captures)
@@ -108,10 +107,8 @@ def run_tracking(
                 if position is not None:
                     trajectory.append((frame_id, position.copy(), measurement is not None))
                     _stamp(canvases, sources, frame_id, position, views)
-                table.writerow(
-                    _trajectory_row(
-                        frame_id, fps, position, measurement, views, camera_ids
-                    )
+                _write_track_rows(
+                    common, per_camera, sources, views, frame_id, position, plane_z
                 )
                 writers = _write_videos(writers, canvases, sources, output, fps)
                 if position is not None and (frame_id == 0 or frame_id % 10 == 0):
@@ -266,61 +263,41 @@ def _fuse(views: list[View], plane_z: float) -> tuple[np.ndarray | None, float]:
     return point, float(sum(weights))
 
 
-def _csv_header(camera_ids: list[str]) -> list[str]:
-    header = [
-        "frame", "time_s", "x_cm", "y_cm", "z_cm",
-        "meas_x", "meas_y", "meas_z", "weight", "n_cameras",
-    ]
-    for camera_id in camera_ids:
-        header.extend([
-            f"{camera_id}_score",
-            f"{camera_id}_weight",
-            f"{camera_id}_u",
-            f"{camera_id}_v",
-            f"{camera_id}_x1",
-            f"{camera_id}_y1",
-            f"{camera_id}_x2",
-            f"{camera_id}_y2",
-        ])
-    return header
+def _open_track_tables(output: Path, sources: list[CameraSource], stack: ExitStack):
+    """Формат как у object_transform_SM_AA_track.csv: Frame;Loc_X;Loc_Y;Loc_Z."""
+    header = ["Frame", "Loc_X", "Loc_Y", "Loc_Z"]
+    common_handle = stack.enter_context(
+        (output / "track.csv").open("w", newline="", encoding="utf-8")
+    )
+    common = csv.writer(common_handle, delimiter=";")
+    common.writerow(header)
+    per_camera: dict[str, csv.writer] = {}
+    for source in sources:
+        handle = stack.enter_context(
+            (output / f"{source.camera_id}.csv").open("w", newline="", encoding="utf-8")
+        )
+        writer = csv.writer(handle, delimiter=";")
+        writer.writerow(header)
+        per_camera[source.camera_id] = writer
+    return common, per_camera
 
 
-def _trajectory_row(frame_id, fps, position, measurement, views, camera_ids) -> list[object]:
-    if measurement is None:
-        meas = ["", "", ""]
-    else:
-        meas = [round(float(v), 2) for v in measurement]
-    if position is None:
-        xyz = ["", "", ""]
-    else:
-        xyz = [round(float(v), 2) for v in position]
+def _write_track_rows(common, per_camera, sources, views, frame_id, position, plane_z) -> None:
     by_camera = {view.camera_id: view for view in views}
-    row: list[object] = [
-        frame_id,
-        round(frame_id / fps, 6),
-        *xyz,
-        *meas,
-        round(float(sum(view.weight for view in views)), 5),
-        len(views),
-    ]
-    for camera_id in camera_ids:
-        view = by_camera.get(camera_id)
-        if view is None:
-            row.extend(["", "", "", "", "", "", "", ""])
-            continue
-        x1, y1, x2, y2 = view.detection.bbox
-        u, v = view.pixel
-        row.extend([
-            round(view.detection.score, 5),
-            round(view.weight, 5),
-            round(float(u), 2),
-            round(float(v), 2),
-            round(x1, 2),
-            round(y1, 2),
-            round(x2, 2),
-            round(y2, 2),
-        ])
-    return row
+    for source in sources:
+        view = by_camera.get(source.camera_id)
+        point = None
+        if view is not None:
+            origin, direction = view.camera.ray_from_pixel(view.pixel)
+            point = intersect_ray_plane(origin, direction, plane_z=plane_z)
+        per_camera[source.camera_id].writerow([frame_id, *_loc_cells(point)])
+    common.writerow([frame_id, *_loc_cells(position)])
+
+
+def _loc_cells(point: np.ndarray | None) -> list[str]:
+    if point is None:
+        return ["", "", ""]
+    return [f"{float(value):.4f}" for value in point]
 
 
 def _stamp(canvases, sources, frame_id, position, views):
