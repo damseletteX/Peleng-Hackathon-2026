@@ -8,6 +8,7 @@ import cv2
 from mv3d.calibration.camera_model import load_camera_from_csv
 from mv3d.detection.detector import VehicleDetector
 from mv3d.detection.localize import localize_detection
+from mv3d.detection.quality import observation_weight
 from mv3d.detection.visualize import draw_detection
 
 CALIB_DIR = Path("configs/calibration")
@@ -33,8 +34,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     detect.add_argument("--frame", type=int, default=0, help="Стартовый кадр для видео")
     detect.add_argument("--max-frames", type=int, default=1)
     detect.add_argument("--out", type=str, default=None)
-    detect.add_argument("--score", type=float, default=0.35)
+    detect.add_argument("--score", type=float, default=0.15)
     detect.add_argument("--plane-z", type=float, default=300.0)
+    detect.add_argument(
+        "--model",
+        default="medium",
+        choices=("small", "medium", "large"),
+    )
+
+    track = sub.add_parser("track", help="Одна 3D-траектория грузовика по камерам")
+    track.add_argument("--config", default="configs/cameras.yml")
+    track.add_argument("--frames", type=int, default=0, help="0 — все кадры")
+    track.add_argument("--score", type=float, default=0.15)
+    track.add_argument(
+        "--model",
+        default="medium",
+        choices=("small", "medium", "large"),
+    )
+    track.add_argument("--out", default="outputs")
     return parser.parse_args(argv)
 
 
@@ -58,7 +75,7 @@ def _run_detect(args: argparse.Namespace) -> int:
     if not source.exists():
         raise SystemExit(f"Не найден файл: {source}")
 
-    detector = VehicleDetector(score_threshold=args.score)
+    detector = VehicleDetector(score_threshold=args.score, model_size=args.model)
     camera = load_camera_from_csv(CAMERA_CSV[args.camera], args.camera, frame=args.frame)
 
     image = cv2.imread(str(source))
@@ -79,6 +96,7 @@ def _run_detect(args: argparse.Namespace) -> int:
             last_canvas = frame
             continue
         xyz = localize_detection([camera], [detection], plane_z=args.plane_z)
+        weight, sharpness, visibility = observation_weight(frame, detection)
         xyz_text = (
             f"X={xyz[0]:.1f} Y={xyz[1]:.1f} Z={xyz[2]:.1f}"
             if xyz is not None
@@ -86,6 +104,7 @@ def _run_detect(args: argparse.Namespace) -> int:
         )
         print(
             f"frame={frame_index} {detection.label} score={detection.score:.2f} "
+            f"w={weight:.3f} sharp={sharpness:.2f} vis={visibility:.2f} "
             f"center={tuple(round(v, 1) for v in detection.center)} {xyz_text}"
         )
         last_canvas = draw_detection(frame, detection, xyz)
@@ -114,12 +133,29 @@ def _iter_video_frames(path: Path, start: int, max_frames: int):
         cap.release()
 
 
+def _run_track(args: argparse.Namespace) -> int:
+    from mv3d.tracking.pipeline import run_tracking
+
+    if args.frames < 0:
+        raise SystemExit("--frames должен быть >= 0")
+    run_tracking(
+        config_path=args.config,
+        frames=args.frames,
+        score_threshold=args.score,
+        model_size=args.model,
+        output_root=args.out,
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     if args.command == "check":
         return _run_check()
     if args.command == "detect":
         return _run_detect(args)
+    if args.command == "track":
+        return _run_track(args)
     parse_args(["--help"])
     return 0
 

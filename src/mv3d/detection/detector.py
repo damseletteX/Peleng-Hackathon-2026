@@ -4,15 +4,16 @@ from dataclasses import dataclass
 
 import numpy as np
 
-# COCO 1-based id -> имя. Цель хакатона — грузовик.
-VEHICLE_LABELS = {
-    3: "car",
-    4: "motorcycle",
-    6: "bus",
-    8: "truck",
-}
+# COCO id грузовика. Детектор оставляет только этот класс.
+TRUCK_LABEL_ID = 8
+VEHICLE_LABELS = {TRUCK_LABEL_ID: "truck"}
+PREFERRED_LABELS = ("truck",)
 
-PREFERRED_LABELS = ("truck", "bus", "car")
+_MODEL_FACTORIES = {
+    "small": "RFDETRSmall",
+    "medium": "RFDETRMedium",
+    "large": "RFDETRLarge",
+}
 
 
 @dataclass(frozen=True)
@@ -33,85 +34,92 @@ class Detection:
         return max(0.0, x2 - x1) * max(0.0, y2 - y1)
 
 
-class VehicleDetector:
-    """2D-детектор транспорта: torchvision Faster R-CNN ResNet50 (BSD-3, COCO).
+def select_truck_boxes(
+    detections: list[Detection],
+    image_area: float,
+    max_box_frac: float = 0.25,
+    iou_threshold: float = 0.5,
+) -> list[Detection]:
+    """Убрать бокс на весь кадр и оставить один бокс на один и тот же грузовик."""
+    compact = [
+        item
+        for item in detections
+        if item.label == "truck" and item.area <= max_box_frac * image_area
+    ]
+    compact.sort(key=lambda item: item.score, reverse=True)
+    kept: list[Detection] = []
+    for item in compact:
+        if all(_iou(item, other) < iou_threshold for other in kept):
+            kept.append(item)
+    return kept
 
-    Код и веса можно свободно использовать в своих проектах.
-    3D-положение считается отдельно по центру бокса и калибровке камер.
+
+def _iou(left: Detection, right: Detection) -> float:
+    ax1, ay1, ax2, ay2 = left.bbox
+    bx1, by1, bx2, by2 = right.bbox
+    ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+    intersection = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+    union = left.area + right.area - intersection
+    if union <= 0:
+        return 0.0
+    return intersection / union
+
+
+class VehicleDetector:
+    """Детектор грузовика: RF-DETR (Apache-2.0, веса COCO).
+
+    По умолчанию Medium: тот же класс моделей, что уже стоит в проекте,
+    без дообучения. Класс truck отбирается по имени COCO.
     """
 
-    def __init__(
-        self,
-        score_threshold: float = 0.35,
-        device: str | None = None,
-        max_box_frac: float = 0.25,
-    ) -> None:
-        import torch
-        from torchvision.models.detection import (
-            FasterRCNN_ResNet50_FPN_V2_Weights,
-            fasterrcnn_resnet50_fpn_v2,
-        )
+    def __init__(self, score_threshold: float = 0.15, model_size: str = "medium") -> None:
+        if model_size not in _MODEL_FACTORIES:
+            known = ", ".join(_MODEL_FACTORIES)
+            raise ValueError(f"Размер модели должен быть одним из: {known}.")
+        import rfdetr
 
         self.score_threshold = score_threshold
-        self.max_box_frac = max_box_frac
-        self.device = torch.device(device or _default_device())
-        weights = FasterRCNN_ResNet50_FPN_V2_Weights.DEFAULT
-        self.model = fasterrcnn_resnet50_fpn_v2(weights=weights)
-        self.model.to(self.device)
-        self.model.eval()
-        self._transforms = weights.transforms()
-        self._torch = torch
+        self.model_size = model_size
+        factory = getattr(rfdetr, _MODEL_FACTORIES[model_size])
+        self.model = factory()
 
     def detect(self, image_bgr: np.ndarray) -> list[Detection]:
-        from PIL import Image
+        import cv2
+        from rfdetr.assets.coco_classes import COCO_CLASSES
 
-        height, width = image_bgr.shape[:2]
-        image_area = float(width * height)
-        rgb = image_bgr[:, :, ::-1]
-        tensor = self._transforms(Image.fromarray(rgb)).to(self.device)
-        with self._torch.inference_mode():
-            output = self.model([tensor])[0]
+        rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+        raw = self.model.predict(rgb, threshold=self.score_threshold)
+        if raw.xyxy is None or len(raw.xyxy) == 0:
+            return []
 
-        boxes = output["boxes"].detach().cpu().numpy()
-        scores = output["scores"].detach().cpu().numpy()
-        labels = output["labels"].detach().cpu().numpy()
+        names = raw.data.get("class_name") if raw.data else None
+        if names is None:
+            names = [COCO_CLASSES.get(int(class_id), "") for class_id in raw.class_id]
+        confidences = raw.confidence
+        if confidences is None:
+            confidences = np.ones(len(raw.xyxy), dtype=np.float64)
 
         detections: list[Detection] = []
-        for box, score, label_id in zip(boxes, scores, labels, strict=True):
-            label_id_int = int(label_id)
-            if float(score) < self.score_threshold:
-                continue
-            name = VEHICLE_LABELS.get(label_id_int)
-            if name is None:
+        for box, score, class_id, name in zip(
+            raw.xyxy, confidences, raw.class_id, names, strict=True
+        ):
+            if str(name) != "truck":
                 continue
             x1, y1, x2, y2 = (float(v) for v in box)
-            detection = Detection(
-                bbox=(x1, y1, x2, y2),
-                score=float(score),
-                label=name,
-                label_id=label_id_int,
+            detections.append(
+                Detection(
+                    bbox=(x1, y1, x2, y2),
+                    score=float(score),
+                    label="truck",
+                    label_id=int(class_id) if int(class_id) > 0 else TRUCK_LABEL_ID,
+                )
             )
-            if detection.area > self.max_box_frac * image_area:
-                continue
-            detections.append(detection)
-        return detections
+        height, width = image_bgr.shape[:2]
+        return select_truck_boxes(detections, float(width * height))
 
     def detect_best(self, image_bgr: np.ndarray) -> Detection | None:
         detections = self.detect(image_bgr)
         if not detections:
             return None
-        rank = {name: index for index, name in enumerate(PREFERRED_LABELS)}
-        return min(
-            detections,
-            key=lambda item: (rank.get(item.label, len(rank)), -item.score),
-        )
-
-
-def _default_device() -> str:
-    import torch
-
-    if torch.cuda.is_available():
-        return "cuda"
-    if torch.backends.mps.is_available():
-        return "mps"
-    return "cpu"
+        return max(detections, key=lambda item: item.score)
