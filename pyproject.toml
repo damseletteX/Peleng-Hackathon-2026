@@ -1,20 +1,28 @@
 [project]
 name = "peleng-hackathon-2026"
 version = "0.1.0"
-description = "Computer vision system for analyzing video from a few calibrated cameras."
+description = "Real-time multi-camera 3D object tracking"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "opencv-python>=5.0",
     "pytest>=9.2.0",
-    "numpy>=2.5",
+    "numpy>=2.0",    
+    "PyYAML>=6.0",
 ]
 
 [dependency-groups]
 dev = [
-    "pytest",
-    "ruff",
+    "pytest>=8.0",
+    "ruff>=0.9",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
 
 [project.scripts]
 peleng-hackathon-2026 = "peleng_hackathon_2026:main"
