@@ -1,13 +1,14 @@
-# Разработка в процессе. Завершение запланировано на 05.11.2026
+# Peleng Hackathon 2026
 
-## Техническое задание:
-- Разработать программное решение, которое по видеопотокам с нескольких калиброванных камер определяет 3D-координаты движущегося объекта (объектов) в режиме реального времени и восстанавливает его траекторию во времени.
+3D-трек грузовика по нескольким калиброванным камерам. Детектор — RF-DETR Medium, класс COCO truck. Точка считается в системе координат выданных таблиц, сантиметры.
 
-## Детекция и траектория
-2D-детектор — RF-DETR Medium, класс COCO truck. 3D-точка — центр бокса: в калибровке актор лежит на плоскости Z=300 см. Две камеры дают взвешенный DLT, одна — луч × эту плоскость. Обрезанный или размытый вид получает меньший вес. Пока детекции нет, ByteTrack держит бокс, а 3D-фильтр продолжает траекторию.
+Камеры, ролики и фокус: `configs/cameras.yml`. Поза каждой камеры читается на каждом кадре из `configs/calibration/`.
 
 ```bash
 uv sync
-uv run python -m mv3d track --frames 300
-uv run python -m mv3d detect configs/cam1.mp4 --camera cam1 --frame 150 --out outputs/cam1_det.png
+uv run python -m mv3d track
+uv run python -m mv3d score outputs/track_<время>
+uv run python -m mv3d detect configs/cam1.mp4 --camera cam1 --frame 150
 ```
+
+`track` пишет в `outputs/track_<время>/` файлы `cam1.csv`…`cam5.csv`, общий `track.csv`, `errors.csv` и `coordinates_time.png`. `score` считает MSE по уже готовому `track.csv`, без детектора.
