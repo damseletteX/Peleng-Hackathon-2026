@@ -58,8 +58,12 @@ def run_tracking(
     score_threshold: float = 0.15,
     model_size: str = "medium",
     output_root: str | Path = "outputs",
+    write_csv: bool = True,
+    write_video: bool = True,
 ) -> Path:
     """Один грузовик по всем камерам из cameras.yml, у которых есть видео."""
+    if not write_csv and not write_video:
+        raise SystemExit("Нужен выход: CSV, видео или оба.")
     plane_z, sources = _load_sources(Path(config_path))
     if not sources:
         raise SystemExit("В конфиге нет камер с существующим видео.")
@@ -69,7 +73,13 @@ def run_tracking(
     print("Камеры:", flush=True)
     for source in sources:
         print(f"  {source.camera_id}: {source.video}", flush=True)
-    print(f"\nЗагрузка RF-DETR {model_size}. Первый запуск скачивает веса.", flush=True)
+    pieces = []
+    if write_csv:
+        pieces.append("CSV")
+    if write_video:
+        pieces.append("видео")
+    print(f"Выход: {', '.join(pieces)}. Модель: {model_size}.", flush=True)
+    print(f"\nЗагрузка модели {model_size}. Первый запуск скачивает веса.", flush=True)
 
     detector = VehicleDetector(score_threshold=score_threshold, model_size=model_size)
     captures = [cv2.VideoCapture(str(source.video)) for source in sources]
@@ -89,7 +99,8 @@ def run_tracking(
         trajectory: list[tuple[int, np.ndarray, bool]] = []
 
         with ExitStack() as stack:
-            common, per_camera, errors = _open_track_tables(output, sources, stack)
+            if write_csv:
+                common, per_camera, errors = _open_track_tables(output, sources, stack)
             gt = _load_gt()
             frame_id = 0
             while frames == 0 or frame_id < frames:
@@ -106,6 +117,7 @@ def run_tracking(
                     frame_id,
                     motion,
                     dt,
+                    draw=write_video,
                 )
                 measurement, weight, locked_id = _fuse(
                     views, plane_z, motion.peek(dt), locked_id
@@ -118,13 +130,16 @@ def run_tracking(
                 )
                 if position is not None:
                     trajectory.append((frame_id, position.copy(), measurement is not None))
-                    _stamp(canvases, sources, frame_id, position, views)
-                _write_track_rows(
-                    common, per_camera, sources, views, frame_id, position, plane_z
-                )
-                truth = gt.get(frame_id)
-                errors.writerow([frame_id, *_error_cells(position, truth)])
-                writers = _write_videos(writers, canvases, sources, output, fps)
+                    if write_video:
+                        _stamp(canvases, sources, frame_id, position, views)
+                if write_csv:
+                    _write_track_rows(
+                        common, per_camera, sources, views, frame_id, position, plane_z
+                    )
+                    truth = gt.get(frame_id)
+                    errors.writerow([frame_id, *_error_cells(position, truth)])
+                if write_video:
+                    writers = _write_videos(writers, canvases, sources, output, fps)
                 if position is not None and (frame_id == 0 or frame_id % 10 == 0):
                     print(
                         f"frame {frame_id}: X={position[0]:.1f} Y={position[1]:.1f} "
@@ -134,12 +149,13 @@ def run_tracking(
                 frame_id += 1
             if frame_id == 0:
                 raise RuntimeError("Не прочитан ни один кадр.")
-        _write_topdown(output / "trajectory_topdown.png", trajectory)
-        plot = output / "coordinates_time.png"
-        write_coordinate_plot(plot, [(frame, xyz) for frame, xyz, _ in trajectory], gt)
-        print(f"Графики: {plot.resolve()}", flush=True)
+        if write_csv:
+            _write_topdown(output / "trajectory_topdown.png", trajectory)
+            plot = output / "coordinates_time.png"
+            write_coordinate_plot(plot, [(frame, xyz) for frame, xyz, _ in trajectory], gt)
+            print(f"Графики: {plot.resolve()}", flush=True)
+            print(f"Ошибки по кадрам: {(output / 'errors.csv').resolve()}", flush=True)
         _report_gt(trajectory)
-        print(f"Ошибки по кадрам: {(output / 'errors.csv').resolve()}", flush=True)
     finally:
         for capture in captures:
             capture.release()
@@ -187,7 +203,9 @@ def _read_frames(captures: list[cv2.VideoCapture]) -> list[np.ndarray] | None:
     return frames
 
 
-def _observe(images, sources, poses, trackers, keepers, detector, frame_id, motion, dt):
+def _observe(
+    images, sources, poses, trackers, keepers, detector, frame_id, motion, dt, draw: bool
+):
     views: list[View] = []
     canvases: list[np.ndarray] = []
     predicted = motion.peek(dt)
@@ -203,7 +221,6 @@ def _observe(images, sources, poses, trackers, keepers, detector, frame_id, moti
         stable = keeper.update(found, width, height)
         live = [] if keeper.last_live is None else [keeper.last_live]
         tracked = tracker.update(detections_to_supervision(live))
-        canvas = image.copy()
         chosen = _choose(
             _candidates(tracked, image, camera, _image_motion(camera, motion)),
             camera,
@@ -211,6 +228,9 @@ def _observe(images, sources, poses, trackers, keepers, detector, frame_id, moti
         )
         if chosen is not None:
             views.append(chosen)
+        if not draw:
+            continue
+        canvas = image.copy()
         if stable is not None:
             _draw_stable(canvas, stable, keeper.last_live)
         canvases.append(canvas)

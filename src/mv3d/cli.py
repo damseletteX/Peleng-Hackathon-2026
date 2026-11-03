@@ -6,7 +6,7 @@ from pathlib import Path
 import cv2
 
 from mv3d.calibration.camera_model import load_camera_from_csv
-from mv3d.detection.detector import VehicleDetector
+from mv3d.detection.detector import MODEL_CHOICES, VehicleDetector
 from mv3d.detection.localize import localize_detection
 from mv3d.detection.quality import observation_weight
 from mv3d.detection.visualize import draw_detection
@@ -39,19 +39,25 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     detect.add_argument(
         "--model",
         default="medium",
-        choices=("small", "medium", "large"),
+        choices=MODEL_CHOICES,
+        help="RF-DETR: nano, small, medium, large. YOLO: yolov8n, yolo26m, yolo11x",
     )
 
-    track = sub.add_parser("track", help="Одна 3D-траектория грузовика по камерам")
-    track.add_argument("--config", default="configs/cameras.yml")
-    track.add_argument("--frames", type=int, default=0, help="0 — все кадры")
-    track.add_argument("--score", type=float, default=0.15)
-    track.add_argument(
-        "--model",
-        default="medium",
-        choices=("small", "medium", "large"),
+    _add_run_args(
+        sub.add_parser("csv", help="Только CSV: быстрее, ролики не пишутся"),
+        write_csv=True,
+        write_video=False,
     )
-    track.add_argument("--out", default="outputs")
+    _add_run_args(
+        sub.add_parser("video", help="Только размеченные ролики, без CSV"),
+        write_csv=False,
+        write_video=True,
+    )
+    _add_run_args(
+        sub.add_parser("track", help="CSV и размеченные ролики"),
+        write_csv=True,
+        write_video=True,
+    )
 
     score = sub.add_parser("score", help="Покадровые ошибки по готовому track.csv")
     score.add_argument("track", help="track.csv или папка прогона")
@@ -62,6 +68,25 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     score.add_argument("--out", default=None, help="Куда писать errors.csv")
     return parser.parse_args(argv)
+
+
+def _add_run_args(
+    parser: argparse.ArgumentParser,
+    *,
+    write_csv: bool,
+    write_video: bool,
+) -> None:
+    parser.set_defaults(write_csv=write_csv, write_video=write_video)
+    parser.add_argument("--config", default="configs/cameras.yml")
+    parser.add_argument("--frames", type=int, default=0, help="0 — все кадры")
+    parser.add_argument("--score", type=float, default=0.15)
+    parser.add_argument(
+        "--model",
+        default="medium",
+        choices=MODEL_CHOICES,
+        help="RF-DETR: nano, small, medium, large. YOLO: yolov8n, yolo26m, yolo11x",
+    )
+    parser.add_argument("--out", default="outputs")
 
 
 def _run_check() -> int:
@@ -160,6 +185,8 @@ def _run_track(args: argparse.Namespace) -> int:
         score_threshold=args.score,
         model_size=args.model,
         output_root=args.out,
+        write_csv=args.write_csv,
+        write_video=args.write_video,
     )
     return 0
 
@@ -170,7 +197,7 @@ def main(argv: list[str] | None = None) -> int:
         return _run_check()
     if args.command == "detect":
         return _run_detect(args)
-    if args.command == "track":
+    if args.command in {"csv", "video", "track"}:
         return _run_track(args)
     if args.command == "score":
         return _run_score(args)

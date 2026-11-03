@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 
@@ -10,10 +11,17 @@ VEHICLE_LABELS = {TRUCK_LABEL_ID: "truck"}
 PREFERRED_LABELS = ("truck",)
 
 _MODEL_FACTORIES = {
+    "nano": "RFDETRNano",
     "small": "RFDETRSmall",
     "medium": "RFDETRMedium",
     "large": "RFDETRLarge",
 }
+MODEL_SIZES = tuple(_MODEL_FACTORIES)
+# yolov8n — самая быстрая, yolo26m — быстрая из полных, yolo11x — самая точная.
+YOLO_MODELS = ("yolov8n", "yolo26m", "yolo11x")
+MODEL_CHOICES = MODEL_SIZES + YOLO_MODELS
+# Индекс truck в COCO из 80 классов, которым пользуется YOLO.
+_YOLO_TRUCK_ID = 7
 
 
 @dataclass(frozen=True)
@@ -54,6 +62,17 @@ def select_truck_boxes(
     return kept
 
 
+def _yolo_weights(name: str) -> Path:
+    """Веса YOLO лежат в кэше, а не в корне репозитория."""
+    folder = Path.home() / ".cache" / "mv3d"
+    folder.mkdir(parents=True, exist_ok=True)
+    destination = folder / f"{name}.pt"
+    stray = Path(f"{name}.pt")
+    if not destination.is_file() and stray.is_file():
+        stray.replace(destination)
+    return destination
+
+
 def _iou(left: Detection, right: Detection) -> float:
     ax1, ay1, ax2, ay2 = left.bbox
     bx1, by1, bx2, by2 = right.bbox
@@ -67,32 +86,73 @@ def _iou(left: Detection, right: Detection) -> float:
 
 
 class VehicleDetector:
-    """Детектор грузовика: RF-DETR (Apache-2.0, веса COCO).
+    """Детектор грузовика без дообучения.
 
-    По умолчанию Medium: тот же класс моделей, что уже стоит в проекте,
-    без дообучения. Класс truck отбирается по имени COCO.
+    По умолчанию RF-DETR Medium. yolov8n, yolo26m и yolo11x переключают на YOLO.
+    Класс truck отбирается по имени COCO.
     """
 
     def __init__(self, score_threshold: float = 0.15, model_size: str = "medium") -> None:
-        if model_size not in _MODEL_FACTORIES:
-            known = ", ".join(_MODEL_FACTORIES)
-            raise ValueError(f"Размер модели должен быть одним из: {known}.")
-        import rfdetr
-
+        if model_size not in MODEL_CHOICES:
+            known = ", ".join(MODEL_CHOICES)
+            raise ValueError(f"Модель должна быть одной из: {known}.")
         self.score_threshold = score_threshold
         self.model_size = model_size
-        factory = getattr(rfdetr, _MODEL_FACTORIES[model_size])
-        self.model = factory()
+        self.backend = "yolo" if model_size in YOLO_MODELS else "rfdetr"
+        if self.backend == "yolo":
+            from ultralytics import YOLO
+
+            self.model = YOLO(str(_yolo_weights(model_size)))
+        else:
+            import rfdetr
+
+            factory = getattr(rfdetr, _MODEL_FACTORIES[model_size])
+            self.model = factory()
 
     def detect(
         self,
         image_bgr: np.ndarray,
         score_threshold: float | None = None,
     ) -> list[Detection]:
+        threshold = self.score_threshold if score_threshold is None else score_threshold
+        if self.backend == "yolo":
+            detections = self._detect_yolo(image_bgr, threshold)
+        else:
+            detections = self._detect_rfdetr(image_bgr, threshold)
+        height, width = image_bgr.shape[:2]
+        return select_truck_boxes(detections, float(width * height))
+
+    def _detect_yolo(self, image_bgr: np.ndarray, threshold: float) -> list[Detection]:
+        raw = self.model.predict(
+            image_bgr,
+            conf=threshold,
+            verbose=False,
+            classes=[_YOLO_TRUCK_ID],
+        )[0]
+        if raw.boxes is None or len(raw.boxes) == 0:
+            return []
+        names = raw.names
+        detections: list[Detection] = []
+        for box in raw.boxes:
+            class_id = int(box.cls)
+            name = names.get(class_id, "") if isinstance(names, dict) else names[class_id]
+            if str(name) != "truck":
+                continue
+            x1, y1, x2, y2 = (float(value) for value in box.xyxy[0])
+            detections.append(
+                Detection(
+                    bbox=(x1, y1, x2, y2),
+                    score=float(np.asarray(box.conf).reshape(-1)[0]),
+                    label="truck",
+                    label_id=class_id,
+                )
+            )
+        return detections
+
+    def _detect_rfdetr(self, image_bgr: np.ndarray, threshold: float) -> list[Detection]:
         import cv2
         from rfdetr.assets.coco_classes import COCO_CLASSES
 
-        threshold = self.score_threshold if score_threshold is None else score_threshold
         rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
         raw = self.model.predict(rgb, threshold=threshold)
         if raw.xyxy is None or len(raw.xyxy) == 0:
@@ -120,8 +180,7 @@ class VehicleDetector:
                     label_id=int(class_id) if int(class_id) > 0 else TRUCK_LABEL_ID,
                 )
             )
-        height, width = image_bgr.shape[:2]
-        return select_truck_boxes(detections, float(width * height))
+        return detections
 
     def detect_best(self, image_bgr: np.ndarray) -> Detection | None:
         detections = self.detect(image_bgr)

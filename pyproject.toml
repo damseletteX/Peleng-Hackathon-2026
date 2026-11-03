@@ -12,6 +12,7 @@ dependencies = [
     "torch>=2.4",
     "torchvision>=0.19",
     "rfdetr==1.11.2",
+    "ultralytics>=8.3",
     "supervision>=0.31.3",
     "trackers>=2.6.1",
 ]
