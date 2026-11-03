@@ -9,6 +9,8 @@ dependencies = [
     "pytest>=9.2.0",
     "numpy>=2.0",
     "PyYAML>=6.0",
+    "torch>=2.4",
+    "torchvision>=0.19",
 ]
 
 [dependency-groups]

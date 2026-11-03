@@ -1,4 +1,4 @@
-from mv3d.cli import parse_args
+from mv3d.cli import main
 
 if __name__ == "__main__":
-    parse_args()
+    raise SystemExit(main())

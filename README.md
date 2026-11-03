@@ -2,3 +2,13 @@
 
 ## Техническое задание:
 - Разработать программное решение, которое по видеопотокам с нескольких калиброванных камер определяет 3D-координаты движущегося объекта (объектов) в режиме реального времени и восстанавливает его траекторию во времени.
+
+## Детекция
+2D-детектор — Faster R-CNN ResNet50 FPN v2 из torchvision (лицензия BSD-3, веса COCO).
+3D-координаты: центр бокса + калибровка камеры (луч × плоскость Z=300 см) или DLT при двух и более видах.
+
+```bash
+uv sync
+uv run python -m mv3d detect cam1_frame150.png --camera cam1 --out outputs/cam1_det.png
+uv run python -m mv3d detect configs/cam1.mp4 --camera cam1 --frame 150 --out outputs/cam1_det.png
+```
