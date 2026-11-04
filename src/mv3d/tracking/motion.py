@@ -126,3 +126,28 @@ def _process_noise(dt: float, accel_std: float) -> np.ndarray:
         noise[axis + 3, axis] = 0.5 * dt3 * variance
         noise[axis + 3, axis + 3] = dt2 * variance
     return noise
+
+
+# Луч через переднюю грань бокса на видимом участке первой камеры.
+# Медиана отклонения от эталона: 1.7 м позади носа и 15.3 м вправо от хода.
+_NOSE_AHEAD_CM = 167.0
+_NOSE_LEFT_CM = 1535.0
+_NOSE_MIN_SPEED_CM_S = 100.0
+
+
+def place_actor_origin(point: np.ndarray, velocity: np.ndarray | None) -> np.ndarray:
+    """Перенести точку луча к носу актора вдоль уже известного хода.
+
+    Пока скорость мала, направление носа неизвестно и точка не сдвигается.
+    """
+    if velocity is None:
+        return np.asarray(point, dtype=np.float64).copy()
+    speed = float(np.hypot(velocity[0], velocity[1]))
+    if speed < _NOSE_MIN_SPEED_CM_S:
+        return np.asarray(point, dtype=np.float64).copy()
+    heading = np.array([velocity[0], velocity[1]], dtype=np.float64) / speed
+    left = np.array([-heading[1], heading[0]], dtype=np.float64)
+    shifted = np.asarray(point, dtype=np.float64).copy()
+    shifted[0] += heading[0] * _NOSE_AHEAD_CM + left[0] * _NOSE_LEFT_CM
+    shifted[1] += heading[1] * _NOSE_AHEAD_CM + left[1] * _NOSE_LEFT_CM
+    return shifted

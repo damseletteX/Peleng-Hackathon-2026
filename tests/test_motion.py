@@ -2,7 +2,7 @@ import numpy as np
 
 from mv3d.calibration.camera_model import Camera, CameraIntrinsics, load_camera_from_csv
 from mv3d.geometry.triangulate import triangulate_points
-from mv3d.tracking.motion import TrajectoryFilter
+from mv3d.tracking.motion import TrajectoryFilter, place_actor_origin
 
 
 def test_low_weight_moves_the_trajectory_less():
@@ -69,3 +69,15 @@ def test_disagreement_downweights_the_bad_camera():
     equal = triangulate_points([cam_a, cam_b], [good, bad])
     weighted = triangulate_points([cam_a, cam_b], [good, bad], [1.0, 0.01])
     assert np.linalg.norm(weighted - point) < np.linalg.norm(equal - point)
+
+
+def test_nose_shift_follows_heading_once_the_truck_is_moving():
+    point = np.array([-167.0, -1535.0, 300.0])
+    moved = place_actor_origin(point, np.array([1000.0, 0.0, 0.0]))
+    assert np.allclose(moved, [0.0, 0.0, 300.0])
+
+
+def test_nose_shift_waits_until_speed_is_known():
+    point = np.array([10.0, 20.0, 300.0])
+    assert np.allclose(place_actor_origin(point, np.array([10.0, 0.0, 0.0])), point)
+    assert np.allclose(place_actor_origin(point, None), point)

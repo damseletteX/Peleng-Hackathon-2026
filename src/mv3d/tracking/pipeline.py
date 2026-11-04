@@ -16,7 +16,7 @@ from mv3d.detection.keypoints import reference_pixel
 from mv3d.detection.quality import observation_weight
 from mv3d.geometry.triangulate import intersect_ray_plane, triangulate_points
 from mv3d.tracking.boxes import BoxKeeper
-from mv3d.tracking.motion import TrajectoryFilter
+from mv3d.tracking.motion import TrajectoryFilter, place_actor_origin
 from mv3d.tracking.tracks import (
     detection_from_supervision,
     detections_to_supervision,
@@ -59,11 +59,16 @@ def run_tracking(
     output_root: str | Path = "outputs",
     write_csv: bool = True,
     write_video: bool = True,
+    camera: str | None = None,
+    write_plots: bool | None = None,
+    should_stop=None,
 ) -> Path:
-    """Один грузовик по всем камерам из cameras.yml, у которых есть видео."""
-    if not write_csv and not write_video:
-        raise SystemExit("Нужен выход: CSV, видео или оба.")
-    plane_z, sources = _load_sources(Path(config_path))
+    """Один грузовик по камерам из cameras.yml. camera — только этот id."""
+    if write_plots is None:
+        write_plots = write_csv
+    if not write_csv and not write_video and not write_plots:
+        raise SystemExit("Нужен выход: CSV, графики, видео или их сочетание.")
+    plane_z, sources = _load_sources(Path(config_path), camera=camera)
     if not sources:
         raise SystemExit("В конфиге нет камер с существующим видео.")
 
@@ -75,6 +80,8 @@ def run_tracking(
     pieces = []
     if write_csv:
         pieces.append("CSV")
+    if write_plots:
+        pieces.append("графики")
     if write_video:
         pieces.append("видео")
     print(f"Выход: {', '.join(pieces)}. Модель: RF-DETR nano.", flush=True)
@@ -103,6 +110,9 @@ def run_tracking(
             gt = _load_gt()
             frame_id = 0
             while frames == 0 or frame_id < frames:
+                if should_stop is not None and should_stop():
+                    print("Остановлено.", flush=True)
+                    break
                 images = _read_frames(captures)
                 if images is None:
                     break
@@ -118,8 +128,9 @@ def run_tracking(
                     dt,
                     draw=write_video,
                 )
+                velocity = None if motion.x is None else motion.x[3:6]
                 measurement, weight, locked_id = _fuse(
-                    views, plane_z, motion.peek(dt), locked_id
+                    views, plane_z, motion.peek(dt), locked_id, velocity
                 )
                 has_measurement = measurement is not None
                 position = motion.step(
@@ -146,13 +157,14 @@ def run_tracking(
                         flush=True,
                     )
                 frame_id += 1
-            if frame_id == 0:
+            if frame_id == 0 and not (should_stop is not None and should_stop()):
                 raise RuntimeError("Не прочитан ни один кадр.")
-        if write_csv:
+        if write_plots:
             _write_topdown(output / "trajectory_topdown.png", trajectory)
             plot = output / "coordinates_time.png"
             write_coordinate_plot(plot, [(frame, xyz) for frame, xyz, _ in trajectory], gt)
             print(f"Графики: {plot.resolve()}", flush=True)
+        if write_csv:
             print(f"Ошибки по кадрам: {(output / 'errors.csv').resolve()}", flush=True)
         _report_gt(trajectory)
     finally:
@@ -166,12 +178,21 @@ def run_tracking(
     return output
 
 
-def _load_sources(config_path: Path) -> tuple[float, list[CameraSource]]:
+def _load_sources(
+    config_path: Path,
+    camera: str | None = None,
+) -> tuple[float, list[CameraSource]]:
     data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     plane_z = float(data.get("object_plane_z_cm", 300.0))
+    cameras = data["cameras"]
+    if camera is not None:
+        if camera not in cameras:
+            known = ", ".join(cameras)
+            raise SystemExit(f"Камеры {camera} нет в конфиге. Доступны: {known}")
+        cameras = {camera: cameras[camera]}
     sources: list[CameraSource] = []
     missing: list[str] = []
-    for camera_id, cfg in data["cameras"].items():
+    for camera_id, cfg in cameras.items():
         video = cfg.get("video")
         calibration = cfg.get("calibration")
         video_path = Path(video) if video else None
@@ -292,6 +313,7 @@ def _fuse(
     plane_z: float,
     predicted: np.ndarray | None,
     locked_id: str | None = None,
+    velocity: np.ndarray | None = None,
 ) -> tuple[np.ndarray | None, float, str | None]:
     """Сложить только камеры, в чьём боксе лежит уже найденный грузовик.
 
@@ -313,6 +335,10 @@ def _fuse(
         )
         if np.all(np.isfinite(triangulated)) and _agree(triangulated, point):
             point = triangulated
+        else:
+            point = place_actor_origin(point, velocity)
+    else:
+        point = place_actor_origin(point, velocity)
     return point, float(sum(weights)), locked_id
 
 
