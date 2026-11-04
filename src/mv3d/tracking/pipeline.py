@@ -208,12 +208,12 @@ def _observe(
     views: list[View] = []
     canvases: list[np.ndarray] = []
     predicted = motion.peek(dt)
-    for image, source, pose_track, tracker, keeper in zip(
-        images, sources, poses, trackers, keepers, strict=True
+    found_per_camera = detector.detect_batch(images, score_threshold=0.05)
+    for image, source, pose_track, tracker, keeper, found in zip(
+        images, sources, poses, trackers, keepers, found_per_camera, strict=True
     ):
         camera = pose_track[min(frame_id, len(pose_track) - 1)]
         height, width = image.shape[:2]
-        found = detector.detect(image, score_threshold=0.05)
         # if keeper.wants_faint():
         #     faint = detector.detect(image, score_threshold=0.05)
         #     found = select_truck_boxes(found + faint, float(width * height))

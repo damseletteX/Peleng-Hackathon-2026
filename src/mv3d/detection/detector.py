@@ -89,49 +89,74 @@ class VehicleDetector:
         image_bgr: np.ndarray,
         score_threshold: float | None = None,
     ) -> list[Detection]:
-        threshold = self.score_threshold if score_threshold is None else score_threshold
-        detections = self._detect_rfdetr(image_bgr, threshold)
-        height, width = image_bgr.shape[:2]
-        return select_truck_boxes(detections, float(width * height))
+        return self.detect_batch([image_bgr], score_threshold=score_threshold)[0]
 
-    def _detect_rfdetr(self, image_bgr: np.ndarray, threshold: float) -> list[Detection]:
-        import cv2
-        from rfdetr.assets.coco_classes import COCO_CLASSES
-
-        rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
-        raw = self.model.predict(rgb, threshold=threshold)
-        if raw.xyxy is None or len(raw.xyxy) == 0:
+    def detect_batch(
+        self,
+        images_bgr: list[np.ndarray],
+        score_threshold: float | None = None,
+    ) -> list[list[Detection]]:
+        """Один forward на все кадры. Порядок ответа совпадает с порядком кадров."""
+        if not images_bgr:
             return []
+        threshold = self.score_threshold if score_threshold is None else score_threshold
+        parsed = self._detect_rfdetr(images_bgr, threshold)
+        selected: list[list[Detection]] = []
+        for image, detections in zip(images_bgr, parsed, strict=True):
+            height, width = image.shape[:2]
+            selected.append(select_truck_boxes(detections, float(width * height)))
+        return selected
 
-        names = raw.data.get("class_name") if raw.data else None
-        if names is None:
-            names = [COCO_CLASSES.get(int(class_id), "") for class_id in raw.class_id]
-        confidences = raw.confidence
-        if confidences is None:
-            confidences = np.ones(len(raw.xyxy), dtype=np.float64)
+    def _detect_rfdetr(
+        self,
+        images_bgr: list[np.ndarray],
+        threshold: float,
+    ) -> list[list[Detection]]:
+        import cv2
 
-        detections: list[Detection] = []
-        for box, score, class_id, name in zip(
-            raw.xyxy, confidences, raw.class_id, names, strict=True
-        ):
-            if str(name) != "truck":
-                continue
-            x1, y1, x2, y2 = (float(v) for v in box)
-            detections.append(
-                Detection(
-                    bbox=(x1, y1, x2, y2),
-                    score=float(score),
-                    label="truck",
-                    label_id=int(class_id) if int(class_id) > 0 else TRUCK_LABEL_ID,
-                )
-            )
-        return detections
+        rgb = [cv2.cvtColor(image, cv2.COLOR_BGR2RGB) for image in images_bgr]
+        raw = self.model.predict(rgb, threshold=threshold, include_source_image=False)
+        if not isinstance(raw, list):
+            raw = [raw]
+        return [_parse_predictions(item) for item in raw]
 
     def detect_best(self, image_bgr: np.ndarray) -> Detection | None:
         detections = self.detect(image_bgr)
         if not detections:
             return None
         return max(detections, key=lambda item: item.score)
+
+
+def _parse_predictions(raw: object) -> list[Detection]:
+    from rfdetr.assets.coco_classes import COCO_CLASSES
+
+    xyxy = getattr(raw, "xyxy", None)
+    if xyxy is None or len(xyxy) == 0:
+        return []
+
+    data = getattr(raw, "data", None)
+    names = data.get("class_name") if data else None
+    class_ids = raw.class_id
+    if names is None:
+        names = [COCO_CLASSES.get(int(class_id), "") for class_id in class_ids]
+    confidences = raw.confidence
+    if confidences is None:
+        confidences = np.ones(len(xyxy), dtype=np.float64)
+
+    detections: list[Detection] = []
+    for box, score, class_id, name in zip(xyxy, confidences, class_ids, names, strict=True):
+        if str(name) != "truck":
+            continue
+        x1, y1, x2, y2 = (float(v) for v in box)
+        detections.append(
+            Detection(
+                bbox=(x1, y1, x2, y2),
+                score=float(score),
+                label="truck",
+                label_id=int(class_id) if int(class_id) > 0 else TRUCK_LABEL_ID,
+            )
+        )
+    return detections
 
 
 def _resolve_weights(*, pretrained: bool, weights: str | Path | None) -> Path | None:

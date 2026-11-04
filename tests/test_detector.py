@@ -1,3 +1,5 @@
+import numpy as np
+
 from mv3d.detection.detector import PREFERRED_LABELS, VEHICLE_LABELS, Detection
 from mv3d.detection.keypoints import bbox_center
 from mv3d.detection.localize import localize_detection
@@ -36,3 +38,45 @@ def test_bbox_center():
 
 def test_localize_returns_none_without_detections():
     assert localize_detection([], []) is None
+
+
+def test_detect_batch_filters_each_frame_from_one_call():
+    from mv3d.detection.detector import VehicleDetector
+
+    calls: list[tuple[int, float]] = []
+
+    class Raw:
+        def __init__(self, xyxy, confidence, names):
+            self.xyxy = np.array(xyxy, dtype=np.float32)
+            self.confidence = np.array(confidence, dtype=np.float64)
+            self.class_id = np.array([8] * len(xyxy))
+            self.data = {"class_name": np.array(names)}
+
+    catalog = [
+        Raw(
+            [[10, 10, 40, 40], [0, 0, 90, 90]],
+            [0.9, 0.8],
+            ["truck", "truck"],
+        ),
+        Raw([], [], []),
+        Raw([[1, 1, 5, 5]], [0.2], ["car"]),
+    ]
+
+    class Model:
+        def predict(self, images, threshold, include_source_image=True):
+            calls.append((len(images), threshold))
+            assert include_source_image is False
+            return catalog[: len(images)]
+
+    detector = VehicleDetector.__new__(VehicleDetector)
+    detector.score_threshold = 0.15
+    detector.model = Model()
+    images = [np.zeros((100, 100, 3), dtype=np.uint8) for _ in range(3)]
+    found = detector.detect_batch(images, score_threshold=0.05)
+
+    assert calls == [(3, 0.05)]
+    assert len(found) == 3
+    assert [item.score for item in found[0]] == [0.9]
+    assert found[1] == []
+    assert found[2] == []
+    assert detector.detect(images[0], score_threshold=0.05) == found[0]
