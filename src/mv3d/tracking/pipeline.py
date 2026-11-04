@@ -63,6 +63,7 @@ def run_tracking(
     camera: str | None = None,
     write_plots: bool | None = None,
     should_stop=None,
+    gt_path: str | Path | None = None,
 ) -> Path:
     """Один грузовик по камерам из конфига. camera — только этот id."""
     if write_plots is None:
@@ -111,7 +112,7 @@ def run_tracking(
         with ExitStack() as stack:
             if write_csv:
                 common, per_camera, errors = _open_track_tables(output, sources, stack)
-            gt = _load_gt()
+            gt = _ground_truth(gt_path)
             frame_id = 0
             while frames == 0 or frame_id < frames:
                 if should_stop is not None and should_stop():
@@ -173,7 +174,7 @@ def run_tracking(
             print(f"Графики: {plot.resolve()}", flush=True)
         if write_csv:
             print(f"Ошибки по кадрам: {(output / 'errors.csv').resolve()}", flush=True)
-        _report_gt(trajectory)
+        _report_gt(trajectory, gt)
     finally:
         for capture in captures:
             capture.release()
@@ -698,22 +699,22 @@ def _write_topdown(path: Path, trajectory: list[tuple[int, np.ndarray]]) -> None
     cv2.imwrite(str(path), canvas)
 
 
-def _report_gt(trajectory: list[tuple[int, np.ndarray]]) -> None:
-    if not _GT_PATH.is_file() or not trajectory:
+def _ground_truth(gt_path: str | Path | None) -> dict[int, np.ndarray]:
+    """None — эталон по умолчанию. Пустая строка — сравнение не нужно."""
+    if gt_path is None:
+        return _load_gt()
+    if not str(gt_path).strip():
+        return {}
+    chosen = Path(gt_path)
+    if not chosen.is_file():
+        print(f"Нет эталона: {chosen}", flush=True)
+        return {}
+    return _load_gt(chosen)
+
+
+def _report_gt(trajectory: list[tuple[int, np.ndarray]], gt: dict[int, np.ndarray]) -> None:
+    if not gt or not trajectory:
         return
-    gt: dict[int, np.ndarray] = {}
-    with _GT_PATH.open(encoding="utf-8", errors="replace") as handle:
-        next(handle, None)
-        for line in handle:
-            parts = [item.strip() for item in line.split(";")]
-            if len(parts) < 4 or not parts[0]:
-                continue
-            try:
-                gt[int(float(parts[0]))] = np.array(
-                    [float(parts[1]), float(parts[2]), float(parts[3])], dtype=np.float64
-                )
-            except ValueError:
-                continue
     squared_measured: list[float] = []
     squared_all: list[float] = []
     for frame, xyz, has_measurement in trajectory:

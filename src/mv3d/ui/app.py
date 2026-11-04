@@ -36,9 +36,17 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from mv3d.ui.session import CameraEntry, load_camera_entries, save_camera_list, write_run_config
+from mv3d.ui.session import (
+    DEFAULT_CAMERAS,
+    CameraEntry,
+    load_camera_entries,
+    save_camera_list,
+    startup_cameras,
+    write_run_config,
+)
 
 _CONFIG = Path("configs/cameras.yml")
+_DEFAULT_GT = Path("configs/calibration/object_transform_SM_AA_track.csv")
 _FRAME_LINE = re.compile(
     r"^frame (\d+): (?:нет точки, views=(\d+)|X=([-\d.]+) Y=([-\d.]+) Z=([-\d.]+).*)"
 )
@@ -140,13 +148,22 @@ class _Job(QThread):
     finished_ok = pyqtSignal(str)
     failed = pyqtSignal(str)
 
-    def __init__(self, config: Path, frames: int, csv: bool, plots: bool, video: bool):
+    def __init__(
+        self,
+        config: Path,
+        frames: int,
+        csv: bool,
+        plots: bool,
+        video: bool,
+        gt_path: str,
+    ):
         super().__init__()
         self.config = config
         self.frames = frames
         self.csv = csv
         self.plots = plots
         self.video = video
+        self.gt_path = gt_path
         self._stop = False
 
     def stop(self) -> None:
@@ -166,6 +183,7 @@ class _Job(QThread):
                 write_video=self.video,
                 write_plots=self.plots,
                 should_stop=lambda: self._stop,
+                gt_path=self.gt_path,
             )
             self.finished_ok.emit(str(output))
         except SystemExit as exc:
@@ -239,18 +257,21 @@ class TrackerWindow(QMainWindow):
         save_list = QPushButton("Сохранить в конфиг")
         save_list.setObjectName("accentButton")
         save_list.clicked.connect(self._save_catalog)
+        reset_list = QPushButton("Исходные 5")
+        reset_list.clicked.connect(self._reset_default)
         catalog_actions.addWidget(add_camera)
         catalog_actions.addWidget(remove_camera)
+        catalog_actions.addWidget(reset_list)
         catalog_actions.addWidget(save_list)
         files_col.addLayout(catalog_actions)
         count_row = QHBoxLayout()
         count_row.addWidget(QLabel("Сколько снять"))
         self.count_spin = QSpinBox()
         self.count_spin.setRange(1, max(len(self.catalog), 1))
-        self.count_spin.setValue(min(len(self.catalog), 1) or 1)
+        self.count_spin.setValue(max(len(self.catalog), 1))
         count_row.addWidget(self.count_spin)
         create = QPushButton("Таблица видео")
-        create.clicked.connect(self._create_table)
+        create.clicked.connect(lambda: self._create_table(save=True))
         count_row.addWidget(create)
         files_col.addLayout(count_row)
         hint = QLabel(
@@ -289,6 +310,18 @@ class TrackerWindow(QMainWindow):
         self.frames.setValue(0)
         frames_row.addWidget(self.frames)
         out_col.addLayout(frames_row)
+        gt_row = QHBoxLayout()
+        gt_row.addWidget(QLabel("Эталон"))
+        self.gt_edit = QLineEdit(str(_DEFAULT_GT) if _DEFAULT_GT.is_file() else "")
+        self.gt_edit.setPlaceholderText("Необязательно: CSV с правильными X Y Z")
+        gt_row.addWidget(self.gt_edit, stretch=1)
+        pick_gt = QPushButton("CSV")
+        pick_gt.clicked.connect(self._pick_gt)
+        clear_gt = QPushButton("Убрать")
+        clear_gt.clicked.connect(self.gt_edit.clear)
+        gt_row.addWidget(pick_gt)
+        gt_row.addWidget(clear_gt)
+        out_col.addLayout(gt_row)
         actions = QHBoxLayout()
         self.run_btn = QPushButton("Запустить")
         self.run_btn.setObjectName("accentButton")
@@ -358,6 +391,10 @@ class TrackerWindow(QMainWindow):
             "font-size: 18px; font-weight: 700; color: #ccff00; padding: 8px 4px;"
         )
         coord_col.addWidget(self.coord_readout)
+        self.metrics = QLabel("MSE и RMSE появятся, если выбран эталон.")
+        self.metrics.setWordWrap(True)
+        self.metrics.setStyleSheet("color: #e0e0e0; padding: 0 4px 8px 4px;")
+        coord_col.addWidget(self.metrics)
         self.coords = QTableWidget(0, 5)
         self.coords.setHorizontalHeaderLabels(["Кадр", "X", "Y", "Z", "Ошибка, см"])
         self.coords.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
@@ -378,13 +415,23 @@ class TrackerWindow(QMainWindow):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.addWidget(split)
         self.setCentralWidget(root)
-        self._fill_catalog()
+        self._fill_catalog(startup_cameras(_CONFIG))
+        self._create_table(save=False)
 
-    def _fill_catalog(self) -> None:
+    def _fill_catalog(self, entries: list[CameraEntry] | None = None) -> None:
+        if entries is None:
+            entries = load_camera_entries(_CONFIG)
         self.catalog_table.setRowCount(0)
-        for entry in load_camera_entries(_CONFIG):
+        for entry in entries:
             self._append_catalog_row(entry.camera_id, entry.calibration, entry.focal_mm)
         self._sync_count_limit()
+        self.count_spin.setValue(max(len(entries), 1))
+        self._startup_videos = {entry.camera_id: entry.video for entry in entries}
+
+    def _reset_default(self) -> None:
+        self._fill_catalog(list(DEFAULT_CAMERAS))
+        self._create_table(save=False)
+        self._note("Исходный тест: cam1–cam5.")
 
     def _append_catalog_row(self, camera_id: str, calibration: str, focal_mm: float) -> None:
         row = self.catalog_table.rowCount()
@@ -460,9 +507,15 @@ class TrackerWindow(QMainWindow):
         self._note(f"Список сохранён: {', '.join(self.catalog)}")
         return True
 
-    def _create_table(self) -> None:
-        if not self._save_catalog():
+    def _create_table(self, save: bool = True) -> None:
+        if save and not self._save_catalog():
             return
+        kept: dict[str, str] = dict(getattr(self, "_startup_videos", {}))
+        for row in range(self.table.rowCount()):
+            camera = self.table.item(row, 0).text()
+            path = self.table.item(row, 1).data(Qt.ItemDataRole.UserRole)
+            if path:
+                kept[camera] = str(path)
         self._release_streams()
         self.table.setRowCount(0)
         for camera in self.catalog[: self.count_spin.value()]:
@@ -481,6 +534,10 @@ class TrackerWindow(QMainWindow):
                 blank = QTableWidgetItem("—")
                 blank.setFlags(blank.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 self.table.setItem(row, col, blank)
+            video = kept.get(camera)
+            if video and Path(video).is_file():
+                self._attach_video(row, camera, video)
+        self._startup_videos = {}
         self._sync_timeline()
         self._layout_grid()
         self._show_frames()
@@ -491,7 +548,12 @@ class TrackerWindow(QMainWindow):
         )
         if not path:
             return
-        camera = self.table.item(row, 0).text()
+        self._attach_video(row, self.table.item(row, 0).text(), path)
+        self._sync_timeline()
+        self._layout_grid()
+        self._show_frames()
+
+    def _attach_video(self, row: int, camera: str, path: str) -> None:
         previous = self.streams.pop(camera, None)
         if previous is not None:
             previous.release()
@@ -506,9 +568,6 @@ class TrackerWindow(QMainWindow):
         file_item.setData(Qt.ItemDataRole.UserRole, path)
         self.table.item(row, 3).setText(f"{stream.fps:.1f}")
         self.table.item(row, 4).setText(str(stream.total_frames))
-        self._sync_timeline()
-        self._layout_grid()
-        self._show_frames()
 
     def _release_streams(self) -> None:
         for stream in self.streams.values():
@@ -623,6 +682,7 @@ class TrackerWindow(QMainWindow):
         self.log.clear()
         self.coords.setRowCount(0)
         self.coord_readout.setText("3D-координаты появятся по ходу прогона.")
+        self.metrics.setText("MSE и RMSE появятся, если выбран эталон.")
         self._saw_coordinate = False
         self.left_scroll.ensureWidgetVisible(self.log)
         if not self._save_catalog():
@@ -648,6 +708,7 @@ class TrackerWindow(QMainWindow):
             self.csv_box.isChecked(),
             self.plot_box.isChecked(),
             self.video_box.isChecked(),
+            self.gt_edit.text().strip(),
         )
         self.job.logged.connect(self._note)
         self.job.finished_ok.connect(self._done)
@@ -703,9 +764,21 @@ class TrackerWindow(QMainWindow):
         if self.last_output is not None:
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.last_output.resolve())))
 
+    def _pick_gt(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Эталон координат", "configs/calibration", "CSV (*.csv)"
+        )
+        if path:
+            self.gt_edit.setText(path)
+
     def _note(self, text: str) -> None:
         self.log.appendPlainText(text)
         self.log.verticalScrollBar().setValue(self.log.verticalScrollBar().maximum())
+        if text.startswith("MSE"):
+            current = self.metrics.text()
+            if current.startswith("MSE и RMSE"):
+                current = ""
+            self.metrics.setText(text if not current else f"{current}\n{text}")
         self._capture_coordinate(text)
 
     def _capture_coordinate(self, text: str) -> None:

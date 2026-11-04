@@ -14,6 +14,41 @@ class CameraEntry:
     video: str = ""
 
 
+# Исходный тест хакатона. Окно стартует с него, список можно менять.
+DEFAULT_CAMERAS = (
+    CameraEntry(
+        "cam1",
+        "configs/calibration/object_transform_CineCameraActor1.csv",
+        35.0,
+        "configs/cam1.mp4",
+    ),
+    CameraEntry(
+        "cam2",
+        "configs/calibration/object_transform_CineCameraActor2.csv",
+        60.0,
+        "configs/cam2.mp4",
+    ),
+    CameraEntry(
+        "cam3",
+        "configs/calibration/object_transform_CineCameraActor3.csv",
+        35.0,
+        "configs/cam3.mp4",
+    ),
+    CameraEntry(
+        "cam4",
+        "configs/calibration/object_transform_CineCameraActor4.csv",
+        50.0,
+        "configs/cam4.mp4",
+    ),
+    CameraEntry(
+        "cam5",
+        "configs/calibration/object_transform_CineCameraActor5.csv",
+        20.0,
+        "configs/cam5.mp4",
+    ),
+)
+
+
 def camera_ids(config_path: str | Path = "configs/cameras.yml") -> list[str]:
     return [entry.camera_id for entry in load_camera_entries(config_path)]
 
@@ -35,6 +70,26 @@ def load_camera_entries(config_path: str | Path) -> list[CameraEntry]:
     return entries
 
 
+def startup_cameras(config_path: str | Path) -> list[CameraEntry]:
+    """Пять камер исходного теста, плюс камеры, которые добавили в конфиг."""
+    saved = {entry.camera_id: entry for entry in load_camera_entries(config_path)}
+    ordered = [saved.get(entry.camera_id, entry) for entry in DEFAULT_CAMERAS]
+    known = {entry.camera_id for entry in DEFAULT_CAMERAS}
+    ordered.extend(entry for camera_id, entry in saved.items() if camera_id not in known)
+    return ordered
+
+
+def _as_project_path(path: str) -> str:
+    if not path:
+        return ""
+    candidate = Path(path)
+    try:
+        relative = candidate.resolve().relative_to(Path.cwd().resolve())
+    except (OSError, ValueError):
+        return path
+    return relative.as_posix()
+
+
 def save_camera_list(config_path: str | Path, entries: list[CameraEntry]) -> None:
     """Записать список камер, не трогая ключи выше блока cameras:."""
     path = Path(config_path)
@@ -54,8 +109,8 @@ def save_camera_list(config_path: str | Path, entries: list[CameraEntry]) -> Non
             raise ValueError(f"Для {camera_id} не выбрана калибровка.")
         old = previous.get(camera_id) or {}
         cameras[camera_id] = {
-            "video": entry.video or old.get("video") or "",
-            "calibration": entry.calibration,
+            "video": _as_project_path(str(entry.video or old.get("video") or "")),
+            "calibration": _as_project_path(entry.calibration),
             "focal_mm": float(entry.focal_mm),
         }
     if not cameras:

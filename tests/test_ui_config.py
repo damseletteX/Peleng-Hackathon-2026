@@ -9,8 +9,21 @@ from mv3d.ui.session import (
     camera_ids,
     load_camera_entries,
     save_camera_list,
+    startup_cameras,
     write_run_config,
 )
+
+
+def test_startup_cameras_restore_original_five(tmp_path):
+    config = tmp_path / "cameras.yml"
+    config.write_text(
+        "cameras:\n  cam1:\n    video: other.mp4\n    calibration: cal.csv\n    focal_mm: 35\n",
+        encoding="utf-8",
+    )
+    entries = startup_cameras(config)
+    assert [entry.camera_id for entry in entries] == ["cam1", "cam2", "cam3", "cam4", "cam5"]
+    assert entries[0].video == "other.mp4"
+    assert entries[1].video.endswith("cam2.mp4")
 
 
 def test_camera_ids_follow_config():
