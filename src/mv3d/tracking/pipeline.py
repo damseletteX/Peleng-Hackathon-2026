@@ -153,12 +153,16 @@ def run_tracking(
                     errors.writerow([frame_id, *_error_cells(position, truth)])
                 if write_video:
                     writers = _write_videos(writers, canvases, sources, output, fps)
-                if position is not None and (frame_id == 0 or frame_id % 10 == 0):
-                    print(
-                        f"frame {frame_id}: X={position[0]:.1f} Y={position[1]:.1f} "
-                        f"Z={position[2]:.1f} weight={weight:.3f} views={len(views)}",
-                        flush=True,
-                    )
+                every = 1 if should_stop is not None else 10
+                if frame_id % every == 0:
+                    if position is None:
+                        print(f"frame {frame_id}: нет точки, views={len(views)}", flush=True)
+                    else:
+                        print(
+                            f"frame {frame_id}: X={position[0]:.1f} Y={position[1]:.1f} "
+                            f"Z={position[2]:.1f} weight={weight:.3f} views={len(views)}",
+                            flush=True,
+                        )
                 frame_id += 1
             if frame_id == 0 and not (should_stop is not None and should_stop()):
                 raise RuntimeError("Не прочитан ни один кадр.")

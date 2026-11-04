@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -24,6 +25,7 @@ from PyQt6.QtWidgets import (
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
+    QScrollArea,
     QSlider,
     QSpinBox,
     QSplitter,
@@ -37,6 +39,9 @@ from PyQt6.QtWidgets import (
 from mv3d.ui.session import CameraEntry, load_camera_entries, save_camera_list, write_run_config
 
 _CONFIG = Path("configs/cameras.yml")
+_FRAME_LINE = re.compile(
+    r"^frame (\d+): (?:нет точки, views=(\d+)|X=([-\d.]+) Y=([-\d.]+) Z=([-\d.]+).*)"
+)
 _STYLE = """
 QMainWindow, QWidget { background-color: #121212; color: #e0e0e0;
     font-family: "Helvetica Neue", "Segoe UI"; font-size: 13px; }
@@ -88,6 +93,11 @@ QProgressBar {
     background: #2c2c2c; border: none; border-radius: 4px; height: 8px; text-align: center; color: transparent;
 }
 QProgressBar::chunk { background: #ccff00; border-radius: 4px; }
+QScrollArea { background: transparent; border: none; }
+QScrollBar:vertical { background: #1a1a1a; width: 12px; margin: 0; }
+QScrollBar::handle:vertical { background: #4a4a4a; min-height: 28px; border-radius: 4px; }
+QScrollBar::handle:vertical:hover { background: #ccff00; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
 """
 
 
@@ -261,6 +271,7 @@ class TrackerWindow(QMainWindow):
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.table.setMinimumHeight(180)
         left_col.addWidget(self.table, stretch=1)
 
         outputs = QGroupBox("Что посчитать")
@@ -300,8 +311,9 @@ class TrackerWindow(QMainWindow):
 
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
-        self.log.setPlaceholderText("Здесь будет ход прогона.")
-        self.log.setMaximumHeight(110)
+        self.log.setPlaceholderText("Здесь будет ход прогона, кадр за кадром.")
+        self.log.setMinimumHeight(260)
+        self.log.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         left_col.addWidget(self.log)
 
         player = QGroupBox("Плеер")
@@ -323,7 +335,8 @@ class TrackerWindow(QMainWindow):
         self.tabs = QTabWidget()
         preview = QWidget()
         self.grid = QGridLayout(preview)
-        self.tabs.addTab(preview, "Камеры")
+        preview_scroll = _scroll(preview)
+        self.tabs.addTab(preview_scroll, "Камеры")
         graph = QWidget()
         graph_col = QVBoxLayout(graph)
         self.time_plot = QLabel("График X, Y, Z появится после прогона.")
@@ -337,8 +350,27 @@ class TrackerWindow(QMainWindow):
         graph_col.addWidget(self.time_plot, stretch=2)
         graph_col.addWidget(self.top_plot, stretch=1)
         self.tabs.addTab(graph, "Графики")
+        self.coord_page = QWidget()
+        coord_col = QVBoxLayout(self.coord_page)
+        self.coord_readout = QLabel("3D-координаты появятся по ходу прогона.")
+        self.coord_readout.setWordWrap(True)
+        self.coord_readout.setStyleSheet(
+            "font-size: 18px; font-weight: 700; color: #ccff00; padding: 8px 4px;"
+        )
+        coord_col.addWidget(self.coord_readout)
+        self.coords = QTableWidget(0, 5)
+        self.coords.setHorizontalHeaderLabels(["Кадр", "X", "Y", "Z", "Ошибка, см"])
+        self.coords.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.coords.verticalHeader().setVisible(False)
+        self.coords.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.coords.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.coords.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        coord_col.addWidget(self.coords)
+        self.tabs.addTab(self.coord_page, "3D координаты")
+        self._saw_coordinate = False
 
-        split.addWidget(left)
+        self.left_scroll = _scroll(left)
+        split.addWidget(self.left_scroll)
         split.addWidget(self.tabs)
         split.setStretchFactor(0, 2)
         split.setStretchFactor(1, 3)
@@ -589,6 +621,10 @@ class TrackerWindow(QMainWindow):
             QMessageBox.warning(self, "Прогон", "Выберите CSV, графики или видео.")
             return
         self.log.clear()
+        self.coords.setRowCount(0)
+        self.coord_readout.setText("3D-координаты появятся по ходу прогона.")
+        self._saw_coordinate = False
+        self.left_scroll.ensureWidgetVisible(self.log)
         if not self._save_catalog():
             return
         try:
@@ -628,7 +664,8 @@ class TrackerWindow(QMainWindow):
         self._finish_job()
         self.open_btn.setEnabled(True)
         self._show_plots(self.last_output)
-        self.tabs.setCurrentIndex(1)
+        self._load_track(self.last_output)
+        self.tabs.setCurrentWidget(self.coord_page)
         self._note(f"Готово: {folder}")
 
     def _fail(self, message: str) -> None:
@@ -669,6 +706,64 @@ class TrackerWindow(QMainWindow):
     def _note(self, text: str) -> None:
         self.log.appendPlainText(text)
         self.log.verticalScrollBar().setValue(self.log.verticalScrollBar().maximum())
+        self._capture_coordinate(text)
+
+    def _capture_coordinate(self, text: str) -> None:
+        match = _FRAME_LINE.match(text.strip())
+        if match is None:
+            return
+        frame = int(match.group(1))
+        if match.group(2) is not None:
+            cells = ("", "", "", "")
+        else:
+            cells = (match.group(3), match.group(4), match.group(5), "")
+            self.coord_readout.setText(
+                f"Кадр {frame}    X={cells[0]}   Y={cells[1]}   Z={cells[2]}"
+            )
+        self._append_coord_row(frame, *cells)
+        self.coords.scrollToBottom()
+        if not self._saw_coordinate and cells[0]:
+            self._saw_coordinate = True
+            self.tabs.setCurrentWidget(self.coord_page)
+
+    def _append_coord_row(self, frame: int, x: str, y: str, z: str, error: str) -> None:
+        row = self.coords.rowCount()
+        self.coords.insertRow(row)
+        for column, value in enumerate((str(frame), x, y, z, error)):
+            item = QTableWidgetItem(value)
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.coords.setItem(row, column, item)
+
+    def _load_track(self, folder: Path) -> None:
+        track = folder / "track.csv"
+        if not track.is_file():
+            return
+        errors: dict[int, str] = {}
+        error_file = folder / "errors.csv"
+        if error_file.is_file():
+            for line in error_file.read_text(encoding="utf-8").splitlines()[1:]:
+                parts = [item.strip() for item in line.split(";")]
+                if len(parts) >= 5 and parts[0]:
+                    errors[int(float(parts[0]))] = parts[4]
+        self.coords.setRowCount(0)
+        last: tuple[int, list[str]] | None = None
+        for line in track.read_text(encoding="utf-8").splitlines()[1:]:
+            parts = [item.strip() for item in line.split(";")]
+            if not parts or not parts[0]:
+                continue
+            frame = int(float(parts[0]))
+            xyz = parts[1:4] if len(parts) >= 4 else ["", "", ""]
+            while len(xyz) < 3:
+                xyz.append("")
+            self._append_coord_row(frame, xyz[0], xyz[1], xyz[2], errors.get(frame, ""))
+            if any(xyz):
+                last = (frame, xyz)
+        if last is not None:
+            frame, xyz = last
+            self.coord_readout.setText(
+                f"Кадр {frame}    X={xyz[0]}   Y={xyz[1]}   Z={xyz[2]}"
+            )
+        self.coords.scrollToBottom()
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
@@ -681,6 +776,15 @@ class TrackerWindow(QMainWindow):
             self.job.wait(3000)
         self._release_streams()
         super().closeEvent(event)
+
+
+def _scroll(widget: QWidget) -> QScrollArea:
+    area = QScrollArea()
+    area.setWidgetResizable(True)
+    area.setWidget(widget)
+    area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+    return area
 
 
 def _catalog() -> list[str]:
