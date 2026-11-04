@@ -1,0 +1,898 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>?????????? ?????????</title>
+  <style>
+    :root {
+      --bg: #10141a;
+      --panel: #181e27;
+      --line: #2c3544;
+      --text: #e7edf5;
+      --muted: #8e9aab;
+      --gt: #6cb6ff;
+      --est: #ff9f43;
+      --err: #ff6b6b;
+    }
+    * { box-sizing: border-box; }
+    html { color-scheme: dark; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 14px/1.45 "Segoe UI", sans-serif;
+    }
+    body::before {
+      content: "";
+      display: block;
+      height: 3px;
+      background: linear-gradient(90deg, var(--est), var(--gt));
+    }
+    main { max-width: 1180px; margin: 0 auto; padding: 20px 20px 40px; }
+    header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-end; }
+    h1 { margin: 0; font-size: 22px; font-weight: 650; letter-spacing: -0.02em; }
+    .sub { margin: 4px 0 0; color: var(--muted); }
+    .bar, .chips { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }
+    .bar { margin-top: 16px; }
+    label { display: grid; gap: 4px; color: var(--muted); font-size: 12px; }
+    input, select, button, .file {
+      background: #10141b;
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 7px 10px;
+      font: inherit;
+    }
+    input[type="number"] { width: 108px; }
+    .file { cursor: pointer; color: var(--text); }
+    .file input { display: none; }
+    .chips { margin-top: 10px; }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+      border-radius: 999px;
+    }
+    .chip.off { opacity: 0.38; }
+    .chip i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+    .hint { min-height: 1.2em; margin: 8px 0 0; color: var(--muted); }
+    .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 14px 0; }
+    .card, .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
+    .card { padding: 12px 14px; }
+    .card b { display: block; font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; }
+    .card span { color: var(--muted); font-size: 12px; }
+    .grid { display: grid; grid-template-columns: 1.25fr 0.75fr; gap: 10px; }
+    .stack { display: grid; gap: 10px; margin-top: 10px; }
+    .panel { padding: 12px 12px 8px; }
+    h2 { margin: 0 0 6px; color: var(--muted); font-size: 12px; font-weight: 600; }
+    canvas { width: 100%; display: block; }
+    #plan { height: 520px; }
+    #err { height: 250px; }
+    .coord { height: 168px; }
+    .readout {
+      margin-top: 4px;
+      min-height: 1.4em;
+      color: var(--text);
+      font-variant-numeric: tabular-nums;
+    }
+    table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; margin-top: 8px; }
+    th, td { text-align: right; padding: 5px 0; }
+    th { color: var(--muted); font-size: 12px; font-weight: 550; }
+    td:first-child, th:first-child { text-align: left; }
+    @media (max-width: 860px) {
+      .stats, .grid { grid-template-columns: 1fr; }
+      header { display: block; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>?????????? ?????????</h1>
+      <p class="sub" id="subtitle"></p>
+    </div>
+  </header>
+  <div class="bar">
+    <label>??????
+      <select id="run"></select>
+    </label>
+    <label>?????? ???
+      <select id="metric"></select>
+    </label>
+    <label>? ?????
+      <input id="from" type="number" step="1">
+    </label>
+    <label>?? ????
+      <input id="to" type="number" step="1">
+    </label>
+    <label class="file">??????? CSV
+      <input id="file" type="file" accept=".csv,text/csv" multiple>
+    </label>
+  </div>
+  <div class="chips" id="chips"></div>
+  <p class="hint" id="hint"></p>
+  <section class="stats">
+    <div class="card"><b id="rmse">�</b><span>RMSE, ??</span></div>
+    <div class="card"><b id="mae">�</b><span>??????? ??????, ??</span></div>
+    <div class="card"><b id="max">�</b><span>????????, ??</span></div>
+    <div class="card"><b id="count">�</b><span>????? ??????</span></div>
+  </section>
+  <div class="grid">
+    <section class="panel">
+      <h2>???? XY, ??</h2>
+      <canvas id="plan"></canvas>
+      <div class="readout" id="readout">???????? ?? ?????? ??? ???????? ?????????</div>
+    </section>
+    <section class="panel">
+      <h2 id="errTitle">?????? 3D, ??</h2>
+      <canvas id="err"></canvas>
+      <div id="axis"></div>
+    </section>
+  </div>
+  <div class="stack">
+    <section class="panel"><h2>X ?? ??????, ??</h2><canvas id="cx" class="coord"></canvas></section>
+    <section class="panel"><h2>Y ?? ??????, ??</h2><canvas id="cy" class="coord"></canvas></section>
+    <section class="panel"><h2>Z ?? ??????, ??</h2><canvas id="cz" class="coord"></canvas></section>
+  </div>
+</main>
+<script id="payload" type="application/json">__PAYLOAD_JSON__</script>
+<script>
+const payload = JSON.parse(document.getElementById("payload").textContent);
+const CAM = ["#7dcea0", "#f5d76e", "#d7bde2", "#85c1e9", "#f5b7b1"];
+const runs = payload.runs.slice();
+let active = runs.length ? 0 : -1;
+let compareId = "fused";
+let lo = 0;
+let hi = 1;
+const show = {gt: true, est: true, cam: {}};
+const geom = {samples: [], frames: []};
+
+const $ = (id) => document.getElementById(id);
+
+function current() {
+  return active >= 0 ? runs[active] : null;
+}
+
+function indexSeries(series) {
+  const map = new Map();
+  if (!series) return map;
+  for (let i = 0; i < series.frames.length; i++) {
+    map.set(series.frames[i], [series.x[i], series.y[i], series.z[i]]);
+  }
+  return map;
+}
+
+function comparedSeries() {
+  const run = current();
+  if (!run) return null;
+  if (compareId === "fused") return run.fused;
+  const camera = run.cameras.find((item) => item.id === compareId);
+  return camera ? camera.series : run.fused;
+}
+
+function visibleSeries() {
+  const list = [];
+  if (show.gt && payload.gt.frames.length) {
+    list.push({id: "gt", color: "#6cb6ff", dash: [6, 4], width: 1.7, series: payload.gt});
+  }
+  const run = current();
+  if (run && show.est) {
+    list.push({id: "est", color: "#ff9f43", dash: [], width: 2.2, series: run.fused});
+  }
+  if (run) {
+    run.cameras.forEach((camera, index) => {
+      if (!show.cam[camera.id]) return;
+      list.push({
+        id: camera.id,
+        color: CAM[index % CAM.length],
+        dash: [],
+        width: 1.3,
+        series: camera.series,
+      });
+    });
+  }
+  return list;
+}
+
+function extent() {
+  let min = Infinity;
+  let max = -Infinity;
+  const take = (series) => {
+    if (!series) return;
+    for (const frame of series.frames) {
+      if (frame < min) min = frame;
+      if (frame > max) max = frame;
+    }
+  };
+  take(payload.gt);
+  const run = current();
+  if (run) {
+    take(run.fused);
+    run.cameras.forEach((camera) => take(camera.series));
+  }
+  if (!Number.isFinite(min)) return [0, 1];
+  return [min, max];
+}
+
+function fmtStat(value) {
+  if (value == null || !Number.isFinite(value)) return "�";
+  const abs = Math.abs(value);
+  if (abs >= 1000) return value.toFixed(0);
+  if (abs >= 100) return value.toFixed(1);
+  return value.toFixed(2);
+}
+
+function fmtTick(value) {
+  const abs = Math.abs(value);
+  if (abs >= 100) return Math.round(value).toString();
+  if (abs >= 10) return (Math.round(value * 10) / 10).toString();
+  return (Math.round(value * 100) / 100).toString();
+}
+
+function evaluate(pred, gt, from, to) {
+  const reference = indexSeries(gt);
+  const dx = [];
+  const dy = [];
+  const dz = [];
+  const frames = [];
+  const err = [];
+  if (pred) {
+    for (let i = 0; i < pred.frames.length; i++) {
+      const frame = pred.frames[i];
+      if (frame < from || frame > to) continue;
+      const point = reference.get(frame);
+      const x = pred.x[i];
+      const y = pred.y[i];
+      const z = pred.z[i];
+      if (!point || point[0] == null || x == null || y == null || z == null) continue;
+      const a = x - point[0];
+      const b = y - point[1];
+      const c = z - point[2];
+      dx.push(a);
+      dy.push(b);
+      dz.push(c);
+      frames.push(frame);
+      err.push(Math.hypot(a, b, c));
+    }
+  }
+  const count = dx.length;
+  if (!count) {
+    return {frames, err, stats: {count: 0}};
+  }
+  let squared = 0;
+  let squaredX = 0;
+  let squaredY = 0;
+  let squaredZ = 0;
+  let sumX = 0;
+  let sumY = 0;
+  let sumZ = 0;
+  let mae = 0;
+  let max = 0;
+  for (let i = 0; i < count; i++) {
+    const value = err[i] * err[i];
+    squared += value;
+    squaredX += dx[i] * dx[i];
+    squaredY += dy[i] * dy[i];
+    squaredZ += dz[i] * dz[i];
+    sumX += dx[i];
+    sumY += dy[i];
+    sumZ += dz[i];
+    mae += err[i];
+    if (err[i] > max) max = err[i];
+  }
+  return {
+    frames,
+    err,
+    stats: {
+      count,
+      rmse: Math.sqrt(squared / count),
+      mae: mae / count,
+      max,
+      rmseX: Math.sqrt(squaredX / count),
+      rmseY: Math.sqrt(squaredY / count),
+      rmseZ: Math.sqrt(squaredZ / count),
+      biasX: sumX / count,
+      biasY: sumY / count,
+      biasZ: sumZ / count,
+    },
+  };
+}
+
+function fillRuns() {
+  const select = $("run");
+  select.innerHTML = "";
+  if (!runs.length) {
+    const option = document.createElement("option");
+    option.textContent = "??? ????????";
+    select.appendChild(option);
+    select.disabled = true;
+    return;
+  }
+  select.disabled = false;
+  runs.forEach((run, index) => {
+    const option = document.createElement("option");
+    option.value = String(index);
+    option.textContent = run.label;
+    select.appendChild(option);
+  });
+  select.value = String(active);
+}
+
+function fillMetric() {
+  const select = $("metric");
+  const previous = compareId;
+  select.innerHTML = "";
+  const add = (value, label) => {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    select.appendChild(option);
+  };
+  add("fused", "??????");
+  const run = current();
+  if (run) run.cameras.forEach((camera) => add(camera.id, camera.id));
+  const values = [...select.options].map((option) => option.value);
+  compareId = values.includes(previous) ? previous : "fused";
+  select.value = compareId;
+  select.disabled = !run;
+}
+
+function rebuildChips() {
+  const box = $("chips");
+  box.innerHTML = "";
+  box.appendChild(chip("??????", "#6cb6ff", show.gt, () => { show.gt = !show.gt; }));
+  const run = current();
+  if (!run) return;
+  box.appendChild(chip("??????", "#ff9f43", show.est, () => { show.est = !show.est; }));
+  run.cameras.forEach((camera, index) => {
+    if (show.cam[camera.id] == null) show.cam[camera.id] = false;
+    const id = camera.id;
+    box.appendChild(chip(id, CAM[index % CAM.length], show.cam[id], () => {
+      show.cam[id] = !show.cam[id];
+    }));
+  });
+}
+
+function chip(label, color, on, toggle) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "chip" + (on ? "" : " off");
+  button.innerHTML = `<i style="background:${color}"></i>${label}`;
+  button.addEventListener("click", () => {
+    toggle();
+    rebuildChips();
+    draw();
+  });
+  return button;
+}
+
+function resetWindow() {
+  const span = extent();
+  lo = span[0];
+  hi = span[1];
+  $("from").value = String(lo);
+  $("to").value = String(hi);
+}
+
+function renderHint() {
+  const run = current();
+  if (!run) {
+    $("hint").textContent = "??????? ??????. ????????? ??????? ??? ???????? track.csv: Frame;Loc_X;Loc_Y;Loc_Z.";
+    return;
+  }
+  const cameras = run.cameras.length ? `, ?????? ${run.cameras.map((item) => item.id).join(", ")}` : "";
+  $("hint").textContent = `${run.path}${cameras}`;
+}
+
+function renderStats(stats) {
+  $("rmse").textContent = fmtStat(stats.rmse);
+  $("mae").textContent = fmtStat(stats.mae);
+  $("max").textContent = fmtStat(stats.max);
+  $("count").textContent = stats.count ? stats.count.toLocaleString("ru-RU") : "�";
+  const row = (name, rmse, bias) => `<tr><td>${name}</td><td>${fmtStat(rmse)}</td><td>${fmtStat(bias)}</td></tr>`;
+  $("axis").innerHTML = stats.count
+    ? `<table><tr><th>???</th><th>RMSE, ??</th><th>????????, ??</th></tr>${
+      row("X", stats.rmseX, stats.biasX)
+    }${row("Y", stats.rmseY, stats.biasY)}${row("Z", stats.rmseZ, stats.biasZ)}</table>`
+    : "";
+}
+
+function bindRun() {
+  fillRuns();
+  fillMetric();
+  rebuildChips();
+  resetWindow();
+  renderHint();
+  play = null;
+  draw();
+}
+
+let play = null;
+
+function prep(canvas) {
+  const ratio = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth || 300;
+  const h = canvas.clientHeight || 150;
+  canvas.width = Math.max(1, Math.round(w * ratio));
+  canvas.height = Math.max(1, Math.round(h * ratio));
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  ctx.font = "12px Segoe UI, sans-serif";
+  return {ctx, w, h};
+}
+
+function niceStep(span, count) {
+  const raw = span / Math.max(count, 1);
+  if (!(raw > 0) || !Number.isFinite(raw)) return 1;
+  const pow = 10 ** Math.floor(Math.log10(raw));
+  const n = raw / pow;
+  const mult = n < 1.5 ? 1 : n < 3.5 ? 2 : n < 7.5 ? 5 : 10;
+  return mult * pow;
+}
+
+function ticks(min, max, count) {
+  if (!(max > min)) return [min];
+  const step = niceStep(max - min, count);
+  const start = Math.ceil((min - step * 1e-9) / step) * step;
+  const out = [];
+  for (let i = 0; i < count + 4; i++) {
+    const value = start + i * step;
+    if (value > max + step * 1e-6) break;
+    if (value >= min - step * 1e-6) out.push(value);
+  }
+  return out.length ? out : [min, max];
+}
+
+function padSpan(min, max) {
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return [0, 1];
+  if (min === max) return [min - 1, max + 1];
+  const pad = (max - min) * 0.06;
+  return [min - pad, max + pad];
+}
+
+function drawGrid(ctx, box, xTicks, yTicks, xAt, yAt) {
+  ctx.save();
+  ctx.strokeStyle = "rgba(231,236,243,0.08)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (const tick of xTicks) {
+    const x = xAt(tick);
+    ctx.moveTo(x, box.top);
+    ctx.lineTo(x, box.bottom);
+  }
+  for (const tick of yTicks) {
+    const y = yAt(tick);
+    ctx.moveTo(box.left, y);
+    ctx.lineTo(box.right, y);
+  }
+  ctx.stroke();
+  ctx.restore();
+  ctx.fillStyle = "#8e9aab";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "top";
+  for (const tick of xTicks) ctx.fillText(fmtTick(tick), xAt(tick), box.bottom + 6);
+  ctx.textAlign = "right";
+  ctx.textBaseline = "middle";
+  for (const tick of yTicks) ctx.fillText(fmtTick(tick), box.left - 8, yAt(tick));
+}
+
+function strokeSeries(ctx, box, frames, xs, ys, from, to, project, color, width, dash) {
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(box.left, box.top, box.right - box.left, box.bottom - box.top);
+  ctx.clip();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.setLineDash(dash);
+  ctx.beginPath();
+  let drawing = false;
+  let previous = null;
+  let first = null;
+  let last = null;
+  for (let i = 0; i < frames.length; i++) {
+    const frame = frames[i];
+    const x = xs[i];
+    const y = ys[i];
+    if (frame < from || frame > to || x == null || y == null) {
+      drawing = false;
+      previous = null;
+      continue;
+    }
+    if (previous != null && frame - previous > 1) drawing = false;
+    const point = project(x, y);
+    if (!drawing) ctx.moveTo(point[0], point[1]);
+    else ctx.lineTo(point[0], point[1]);
+    if (!first) first = point;
+    last = point;
+    drawing = true;
+    previous = frame;
+  }
+  ctx.stroke();
+  if (first) {
+    ctx.setLineDash([]);
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(first[0], first[1], 3.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.arc(last[0], last[1], 4.2, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function boundsOf(seriesList, axisX, axisY) {
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  const take = (x, y, frame) => {
+    if (frame < lo || frame > hi || x == null || y == null) return;
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+  };
+  for (const item of seriesList) {
+    const series = item.series;
+    for (let i = 0; i < series.frames.length; i++) {
+      take(series[axisX][i], series[axisY][i], series.frames[i]);
+    }
+  }
+  return {minX, maxX, minY, maxY};
+}
+
+function drawPlan() {
+  const canvas = $("plan");
+  const view = prep(canvas);
+  const series = visibleSeries();
+  const pad = {l: 72, r: 16, t: 12, b: 32};
+  const found = boundsOf(series, "x", "y");
+  const xSpan = padSpan(found.minX, found.maxX);
+  const ySpan = padSpan(found.minY, found.maxY);
+  const minX = xSpan[0];
+  const maxX = xSpan[1];
+  const minY = ySpan[0];
+  const maxY = ySpan[1];
+  const availW = view.w - pad.l - pad.r;
+  const availH = view.h - pad.t - pad.b;
+  const spanX = maxX - minX || 1;
+  const spanY = maxY - minY || 1;
+  const scale = Math.min(availW / spanX, availH / spanY);
+  const left = pad.l + (availW - spanX * scale) / 2;
+  const bottom = view.h - pad.b - (availH - spanY * scale) / 2;
+  const box = {left, right: left + spanX * scale, top: bottom - spanY * scale, bottom};
+  const sx = (x) => left + (x - minX) * scale;
+  const sy = (y) => bottom - (y - minY) * scale;
+  drawGrid(view.ctx, box, ticks(minX, maxX, 5), ticks(minY, maxY, 5), sx, sy);
+  geom.samples = [];
+  for (const item of series) {
+    strokeSeries(
+      view.ctx, box, item.series.frames, item.series.x, item.series.y,
+      lo, hi, (x, y) => [sx(x), sy(y)], item.color, item.width, item.dash,
+    );
+    const points = item.series;
+    for (let i = 0; i < points.frames.length; i++) {
+      const frame = points.frames[i];
+      if (frame < lo || frame > hi || points.x[i] == null || points.y[i] == null) continue;
+      geom.samples.push({f: frame, sx: sx(points.x[i]), sy: sy(points.y[i])});
+    }
+  }
+  markPlay(view.ctx, series, (frame, x, y) => [sx(x), sy(y)], "xy");
+}
+
+function markPlay(ctx, series, project, mode) {
+  if (play == null) return;
+  ctx.save();
+  ctx.setLineDash([]);
+  for (const item of series) {
+    const points = item.series;
+    for (let i = 0; i < points.frames.length; i++) {
+      if (points.frames[i] !== play) continue;
+      const x = mode === "xy" ? points.x[i] : points.frames[i];
+      const y = mode === "xy" ? points.y[i] : points[mode][i];
+      if (x == null || y == null) continue;
+      const point = project(points.frames[i], x, y);
+      ctx.fillStyle = item.color;
+      ctx.beginPath();
+      ctx.arc(point[0], point[1], 4.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+
+function timeMap(w, h, minY, maxY) {
+  const pad = {l: 72, r: 16, t: 12, b: 28};
+  const left = pad.l;
+  const right = w - pad.r;
+  const top = pad.t;
+  const bottom = h - pad.b;
+  const spanF = (hi - lo) || 1;
+  const spanY = (maxY - minY) || 1;
+  return {
+    left, right, top, bottom,
+    sx: (frame) => left + (frame - lo) / spanF * (right - left),
+    sy: (value) => bottom - (value - minY) / spanY * (bottom - top),
+    frameAt: (px) => lo + (px - left) / (right - left) * spanF,
+  };
+}
+
+function drawTime(canvas, valueOf, minFixed) {
+  const view = prep(canvas);
+  const series = visibleSeries();
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (const item of series) {
+    const points = item.series;
+    for (let i = 0; i < points.frames.length; i++) {
+      const frame = points.frames[i];
+      const value = valueOf(points, i);
+      if (frame < lo || frame > hi || value == null) continue;
+      if (value < minY) minY = value;
+      if (value > maxY) maxY = value;
+    }
+  }
+  if (minFixed != null) minY = minFixed;
+  const span = padSpan(minY, maxY);
+  if (minFixed != null) span[0] = 0;
+  const map = timeMap(view.w, view.h, span[0], span[1]);
+  canvas._frameAt = map.frameAt;
+  drawGrid(view.ctx, map, ticks(lo, hi, 6), ticks(span[0], span[1], 4), map.sx, map.sy);
+  if (play != null && play >= lo && play <= hi) {
+    view.ctx.save();
+    view.ctx.strokeStyle = "rgba(231,236,243,0.35)";
+    view.ctx.beginPath();
+    view.ctx.moveTo(map.sx(play), map.top);
+    view.ctx.lineTo(map.sx(play), map.bottom);
+    view.ctx.stroke();
+    view.ctx.restore();
+  }
+  for (const item of series) {
+    const points = item.series;
+    const values = points.frames.map((_, index) => valueOf(points, index));
+    strokeSeries(
+      view.ctx, map, points.frames, points.frames, values,
+      lo, hi, (frame, value) => [map.sx(frame), map.sy(value)],
+      item.color, item.width, item.dash,
+    );
+  }
+  const mode = canvas.dataset.axis;
+  if (mode) markPlay(view.ctx, series, (frame, _x, y) => [map.sx(frame), map.sy(y)], mode);
+}
+
+function drawError(report) {
+  const canvas = $("err");
+  const view = prep(canvas);
+  let max = 1;
+  for (const value of report.err) if (value > max) max = value;
+  const map = timeMap(view.w, view.h, 0, max * 1.08);
+  canvas._frameAt = map.frameAt;
+  drawGrid(view.ctx, map, ticks(lo, hi, 5), ticks(0, max * 1.08, 4), map.sx, map.sy);
+  strokeSeries(
+    view.ctx, map, report.frames, report.frames, report.err,
+    lo, hi, (frame, value) => [map.sx(frame), map.sy(value)],
+    "#ff6b6b", 1.8, [],
+  );
+  if (play != null && play >= lo && play <= hi) {
+    view.ctx.strokeStyle = "rgba(231,236,243,0.35)";
+    view.ctx.beginPath();
+    view.ctx.moveTo(map.sx(play), map.top);
+    view.ctx.lineTo(map.sx(play), map.bottom);
+    view.ctx.stroke();
+  }
+}
+
+function collectFrames() {
+  const found = new Set();
+  const take = (series) => {
+    if (!series) return;
+    for (const frame of series.frames) {
+      if (frame >= lo && frame <= hi) found.add(frame);
+    }
+  };
+  for (const item of visibleSeries()) take(item.series);
+  take(comparedSeries());
+  geom.frames = [...found].sort((a, b) => a - b);
+}
+
+function nearestFrame(frame) {
+  const frames = geom.frames;
+  if (!frames.length || !Number.isFinite(frame)) return null;
+  let best = frames[0];
+  let bestDistance = Math.abs(best - frame);
+  for (let i = 1; i < frames.length; i++) {
+    const distance = Math.abs(frames[i] - frame);
+    if (distance <= bestDistance) {
+      best = frames[i];
+      bestDistance = distance;
+      continue;
+    }
+    if (frames[i] > frame) break;
+  }
+  return best;
+}
+
+function renderReadout() {
+  const el = $("readout");
+  if (play == null) {
+    el.textContent = "???????? ?? ?????? ??? ???????? ?????????";
+    return;
+  }
+  const gt = indexSeries(payload.gt).get(play);
+  const predSeries = comparedSeries();
+  const pred = predSeries ? indexSeries(predSeries).get(play) : null;
+  const parts = [`???? ${play}`];
+  const fmt = (point) => point && point[0] != null
+    ? `${fmtStat(point[0])}, ${fmtStat(point[1])}, ${fmtStat(point[2])}`
+    : null;
+  const gtText = fmt(gt);
+  const predText = fmt(pred);
+  if (gtText) parts.push(`?????? ${gtText}`);
+  if (predText) parts.push(`????????? ${predText}`);
+  if (gtText && predText) {
+    parts.push(`?????? ${fmtStat(Math.hypot(pred[0] - gt[0], pred[1] - gt[1], pred[2] - gt[2]))} ??`);
+  }
+  el.textContent = parts.join("   �   ");
+}
+
+function draw() {
+  const report = evaluate(comparedSeries(), payload.gt, lo, hi);
+  const metricLabel = compareId === "fused" ? "??????" : compareId;
+  $("errTitle").textContent = current()
+    ? `?????? 3D � ${metricLabel}, ??`
+    : "?????? 3D, ??";
+  renderStats(report.stats);
+  collectFrames();
+  drawPlan();
+  drawError(report);
+  drawTime($("cx"), (series, index) => series.x[index], null);
+  drawTime($("cy"), (series, index) => series.y[index], null);
+  drawTime($("cz"), (series, index) => series.z[index], null);
+  renderReadout();
+}
+
+function hover(canvas, kind) {
+  canvas.addEventListener("mousemove", (event) => {
+    const rect = canvas.getBoundingClientRect();
+    const px = event.clientX - rect.left;
+    const py = event.clientY - rect.top;
+    let frame = null;
+    if (kind === "plan") {
+      let best = null;
+      let bestDistance = 18;
+      for (const sample of geom.samples) {
+        const distance = Math.hypot(sample.sx - px, sample.sy - py);
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          best = sample;
+        }
+      }
+      if (!best) return;
+      frame = best.f;
+    } else if (canvas._frameAt) {
+      frame = nearestFrame(canvas._frameAt(px));
+    }
+    if (frame == null || frame === play) return;
+    play = frame;
+    draw();
+  });
+}
+
+function parseLoc(text) {
+  const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/).filter((line) => line.trim());
+  const frames = [];
+  const x = [];
+  const y = [];
+  const z = [];
+  if (!lines.length) return {frames, x, y, z};
+  const delimiter = (lines[0].match(/;/g) || []).length >= (lines[0].match(/,/g) || []).length ? ";" : ",";
+  const rows = lines.map((line) => line.split(delimiter).map((cell) => cell.trim()));
+  const header = rows[0].map((cell) => cell.toLowerCase());
+  let start = 1;
+  let cols = [
+    header.indexOf("frame"),
+    header.indexOf("loc_x") >= 0 ? header.indexOf("loc_x") : header.indexOf("x"),
+    header.indexOf("loc_y") >= 0 ? header.indexOf("loc_y") : header.indexOf("y"),
+    header.indexOf("loc_z") >= 0 ? header.indexOf("loc_z") : header.indexOf("z"),
+  ];
+  if (cols.some((index) => index < 0)) {
+    cols = [0, 1, 2, 3];
+    start = 0;
+  }
+  const num = (value) => {
+    if (!value) return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+  for (let i = start; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row[cols[0]]) continue;
+    const frame = Number(row[cols[0]]);
+    if (!Number.isFinite(frame)) continue;
+    frames.push(Math.trunc(frame));
+    x.push(num(row[cols[1]]));
+    y.push(num(row[cols[2]]));
+    z.push(num(row[cols[3]]));
+  }
+  return {frames, x, y, z};
+}
+
+async function onFiles(fileList) {
+  const files = [...fileList];
+  const parsed = [];
+  for (const file of files) parsed.push({name: file.name, series: parseLoc(await file.text())});
+  let fused = parsed.find((item) => item.name.toLowerCase() === "track.csv");
+  const cameras = parsed.filter((item) => /^cam\d+\.csv$/i.test(item.name));
+  if (!fused) fused = parsed.find((item) => !/^cam\d+\.csv$/i.test(item.name));
+  if (!fused) return;
+  runs.push({
+    id: `file:${fused.name}:${Date.now()}`,
+    label: fused.name,
+    path: fused.name,
+    fused: fused.series,
+    cameras: cameras.map((item) => ({id: item.name.replace(/\.csv$/i, ""), series: item.series})),
+  });
+  active = runs.length - 1;
+  compareId = "fused";
+  bindRun();
+}
+
+$("subtitle").textContent = `?????? track.csv ? ?????? ${payload.gtName}. ??????? ?? ??, ??? ? CSV (??).`;
+$("cx").dataset.axis = "x";
+$("cy").dataset.axis = "y";
+$("cz").dataset.axis = "z";
+fillRuns();
+$("run").addEventListener("change", () => {
+  active = Number($("run").value);
+  compareId = "fused";
+  bindRun();
+});
+$("metric").addEventListener("change", () => {
+  compareId = $("metric").value;
+  draw();
+});
+const readWindow = () => {
+  const from = Number($("from").value);
+  const to = Number($("to").value);
+  if (!Number.isFinite(from) || !Number.isFinite(to)) return;
+  lo = Math.min(from, to);
+  hi = Math.max(from, to);
+  if (play != null && (play < lo || play > hi)) play = null;
+  draw();
+};
+$("from").addEventListener("change", readWindow);
+$("to").addEventListener("change", readWindow);
+$("file").addEventListener("change", () => {
+  if ($("file").files.length) onFiles($("file").files);
+});
+document.body.addEventListener("dragover", (event) => event.preventDefault());
+document.body.addEventListener("drop", (event) => {
+  event.preventDefault();
+  if (event.dataTransfer.files.length) onFiles(event.dataTransfer.files);
+});
+for (const id of ["plan", "err", "cx", "cy", "cz"]) hover($(id), id === "plan" ? "plan" : "time");
+document.addEventListener("keydown", (event) => {
+  if (event.target.matches("input, select, textarea")) return;
+  if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+  if (!geom.frames.length) return;
+  const dir = event.key === "ArrowRight" ? 1 : -1;
+  let index = geom.frames.indexOf(play);
+  if (index < 0) index = dir > 0 ? -1 : geom.frames.length;
+  index = Math.min(geom.frames.length - 1, Math.max(0, index + dir));
+  play = geom.frames[index];
+  draw();
+  event.preventDefault();
+});
+window.addEventListener("resize", draw);
+bindRun();
+</script>
+</body>
+</html>
