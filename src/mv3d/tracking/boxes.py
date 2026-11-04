@@ -85,13 +85,19 @@ class BoxKeeper:
     def _adopt(self, detection: Detection) -> None:
         new = np.asarray(detection.bbox, dtype=np.float64)
         if self.box is not None:
+            new = _clip_blurred_top(new, self.box)
             delta = new - self.box
             self.velocity = 0.6 * self.velocity + 0.4 * delta
             self.box = 0.75 * new + 0.25 * (self.box + self.velocity)
         else:
             self.box = new
         self.miss = 0
-        self.last_live = detection
+        self.last_live = Detection(
+            bbox=(float(self.box[0]), float(self.box[1]), float(self.box[2]), float(self.box[3])),
+            score=detection.score,
+            label=detection.label,
+            label_id=detection.label_id,
+        )
         self._pending = None
         self._pending_hits = 0
 
@@ -109,6 +115,31 @@ class BoxKeeper:
         if not matched:
             return None
         return max(matched, key=lambda item: item.score)
+
+
+def _clip_blurred_top(new: np.ndarray, previous: np.ndarray) -> np.ndarray:
+    """Срезать верх, если он вытянулся один, без роста ширины.
+
+    Подъезд увеличивает ширину и высоту вместе. Смаз поднимает только верх,
+    пока низ стоит на месте. Высоту при этом не запоминаем: иначе бокс
+    не успевает вырасти, когда грузовик действительно приближается.
+    """
+    prev_w = float(previous[2] - previous[0])
+    prev_h = float(previous[3] - previous[1])
+    if prev_w < 8.0 or prev_h < 8.0:
+        return new
+    width_ratio = float(new[2] - new[0]) / prev_w
+    if width_ratio > 1.08:
+        return new
+    new_h = float(new[3] - new[1])
+    top_up = float(previous[1] - new[1])
+    bottom_shift = abs(float(new[3] - previous[3]))
+    if new_h <= prev_h * 1.2 or top_up <= bottom_shift:
+        return new
+    allowed = prev_h * max(width_ratio, 1.0) * 1.05
+    out = new.copy()
+    out[1] = float(new[3]) - allowed
+    return out
 
 
 def _is_sliver(

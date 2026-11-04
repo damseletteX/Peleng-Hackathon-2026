@@ -17,6 +17,29 @@ def test_a_sliver_at_the_edge_does_not_shrink_the_box():
     assert kept[2] - kept[0] > 200
 
 
+def test_a_blurred_top_is_cut_when_the_width_stays():
+    keeper = BoxKeeper()
+    box = (400.0, 410.0, 700.0, 491.0)
+    keeper.update([_truck(box)], 1280, 720)
+    keeper.update([_truck(box)], 1280, 720)
+    blurred = (400.0, 330.0, 700.0, 491.0)
+    kept = keeper.update([_truck(blurred)], 1280, 720)
+    assert kept is not None
+    assert kept[1] > 400.0
+    assert kept[3] - kept[1] < 100.0
+
+
+def test_the_box_grows_when_the_truck_gets_closer():
+    keeper = BoxKeeper()
+    box = (400.0, 410.0, 700.0, 491.0)
+    keeper.update([_truck(box)], 1280, 720)
+    keeper.update([_truck(box)], 1280, 720)
+    closer = (340.0, 360.0, 760.0, 540.0)
+    kept = keeper.update([_truck(closer)], 1280, 720)
+    assert kept is not None
+    assert kept[3] - kept[1] > 140.0
+
+
 def test_one_missed_frame_keeps_the_box():
     keeper = BoxKeeper()
     box = (100.0, 200.0, 300.0, 400.0)

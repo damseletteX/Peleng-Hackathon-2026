@@ -405,6 +405,29 @@ class TrackerWindow(QMainWindow):
         coord_col.addWidget(self.coords)
         self.tabs.addTab(self.coord_page, "3D координаты")
         self._saw_coordinate = False
+        self.space_page = QWidget()
+        space_col = QVBoxLayout(self.space_page)
+        caption = QLabel("Общий путь грузовика и следы каждой камеры в одном пространстве.")
+        caption.setStyleSheet("color: #ccff00; font-weight: 600;")
+        space_col.addWidget(caption)
+        self.space_view = QLabel("Траектория в пространстве появится после прогона.")
+        self.space_view.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.space_view.setMinimumHeight(420)
+        self.space_view.setStyleSheet("background: #121212; border-radius: 8px; color: #888;")
+        space_col.addWidget(self.space_view, stretch=1)
+        space_row = QHBoxLayout()
+        self.space_play = QPushButton("Движение")
+        self.space_play.clicked.connect(self._toggle_space)
+        self.space_slider = QSlider(Qt.Orientation.Horizontal)
+        self.space_slider.valueChanged.connect(self._on_space_slider)
+        space_row.addWidget(self.space_play)
+        space_row.addWidget(self.space_slider, stretch=1)
+        space_col.addLayout(space_row)
+        self.tabs.addTab(self.space_page, "Пространство")
+        self.space_timer = QTimer(self)
+        self.space_timer.timeout.connect(self._advance_space)
+        self._space_fused: list = []
+        self._space_cameras: dict = {}
 
         self.left_scroll = _scroll(left)
         split.addWidget(self.left_scroll)
@@ -726,7 +749,8 @@ class TrackerWindow(QMainWindow):
         self.open_btn.setEnabled(True)
         self._show_plots(self.last_output)
         self._load_track(self.last_output)
-        self.tabs.setCurrentWidget(self.coord_page)
+        self._show_space(self.last_output)
+        self.tabs.setCurrentWidget(self.space_page)
         self._note(f"Готово: {folder}")
 
     def _fail(self, message: str) -> None:
@@ -738,6 +762,72 @@ class TrackerWindow(QMainWindow):
         self.run_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.progress.hide()
+
+    def _show_space(self, folder: Path) -> None:
+        from mv3d.ui.scene import load_tracks
+
+        self.space_timer.stop()
+        self.space_play.setText("Движение")
+        self._space_fused, self._space_cameras = load_tracks(folder)
+        last = max(len(self._space_fused) - 1, 0)
+        self.space_slider.blockSignals(True)
+        self.space_slider.setMaximum(last)
+        self.space_slider.setValue(last)
+        self.space_slider.blockSignals(False)
+        picture = self._paint_space()
+        if picture is not None:
+            path = folder / "space.png"
+            cv2.imwrite(str(path), picture)
+
+    def _paint_space(self) -> np.ndarray | None:
+        from mv3d.ui.scene import render_space
+
+        if len(self._space_fused) < 2:
+            self.space_view.setText("Мало точек для сцены.")
+            self.space_view.setPixmap(QPixmap())
+            return None
+        width = max(self.space_view.width(), 960)
+        height = max(self.space_view.height(), 640)
+        image = render_space(
+            self._space_fused,
+            self._space_cameras,
+            width=width,
+            height=height,
+            cursor=self.space_slider.value(),
+        )
+        rgb = np.ascontiguousarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+        view_h, view_w, channels = rgb.shape
+        frame = QImage(rgb.data, view_w, view_h, channels * view_w, QImage.Format.Format_RGB888).copy()
+        self.space_view.setPixmap(
+            QPixmap.fromImage(frame).scaled(
+                self.space_view.size(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        )
+        return image
+
+    def _on_space_slider(self, _value: int) -> None:
+        self._paint_space()
+
+    def _toggle_space(self) -> None:
+        if len(self._space_fused) < 2:
+            return
+        if self.space_timer.isActive():
+            self.space_timer.stop()
+            self.space_play.setText("Движение")
+            return
+        if self.space_slider.value() >= self.space_slider.maximum():
+            self.space_slider.setValue(0)
+        self.space_timer.start(40)
+        self.space_play.setText("Пауза")
+
+    def _advance_space(self) -> None:
+        if self.space_slider.value() >= self.space_slider.maximum():
+            self.space_timer.stop()
+            self.space_play.setText("Движение")
+            return
+        self.space_slider.setValue(self.space_slider.value() + 1)
 
     def _show_plots(self, folder: Path) -> None:
         self._set_plot(self.time_plot, folder / "coordinates_time.png", "Нет графика координат.")
@@ -842,6 +932,7 @@ class TrackerWindow(QMainWindow):
         super().resizeEvent(event)
         if self.last_output is not None:
             self._show_plots(self.last_output)
+            self._paint_space()
 
     def closeEvent(self, event) -> None:
         if self.job is not None and self.job.isRunning():
