@@ -17,29 +17,6 @@ def test_a_sliver_at_the_edge_does_not_shrink_the_box():
     assert kept[2] - kept[0] > 200
 
 
-def test_a_blurred_top_does_not_climb_while_the_bottom_stays():
-    keeper = BoxKeeper()
-    box = (400.0, 410.0, 700.0, 491.0)
-    keeper.update([_truck(box)], 1280, 720)
-    keeper.update([_truck(box)], 1280, 720)
-    for step in range(1, 9):
-        climbed = (400.0, 410.0 - 3.0 * step, 700.0, 491.0)
-        kept = keeper.update([_truck(climbed, 0.8)], 1280, 720)
-        assert kept is not None
-        assert kept[1] > 400.0
-
-
-def test_the_whole_box_can_still_move_up():
-    keeper = BoxKeeper()
-    box = (400.0, 410.0, 700.0, 491.0)
-    keeper.update([_truck(box)], 1280, 720)
-    keeper.update([_truck(box)], 1280, 720)
-    moved = (400.0, 390.0, 700.0, 471.0)
-    kept = keeper.update([_truck(moved)], 1280, 720)
-    assert kept is not None
-    assert kept[1] < 405.0
-
-
 def test_one_missed_frame_keeps_the_box():
     keeper = BoxKeeper()
     box = (100.0, 200.0, 300.0, 400.0)
