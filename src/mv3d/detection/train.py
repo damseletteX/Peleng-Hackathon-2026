@@ -42,7 +42,7 @@ class FoldResult:
 def train_nano(
     config_path: str | Path = "configs/cameras.yml",
     *,
-    stride: int = 6,
+    stride: int = 12,
     score_threshold: float = 0.25,
     epochs: int = 8,
     batch_size: int = 4,

@@ -67,7 +67,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Аугментация и дообучение RF-DETR nano, по одной камере в valid",
     )
     train.add_argument("--config", default="configs/cameras.yml")
-    train.add_argument("--stride", type=int, default=6, help="Брать каждый N-й кадр")
+    train.add_argument("--stride", type=int, default=12, help="Брать каждый N-й кадр")
     train.add_argument("--score", type=float, default=0.25, help="Порог псевдоразметки")
     train.add_argument("--epochs", type=int, default=8)
     train.add_argument("--batch-size", type=int, default=4)
