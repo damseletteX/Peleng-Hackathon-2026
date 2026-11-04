@@ -2,7 +2,19 @@ import random
 
 import numpy as np
 
-from mv3d.detection.augment import crop, horizontal_flip, photometric, rotate, vertical_flip
+from mv3d.detection.augment import (
+    crop,
+    expand_views,
+    horizontal_flip,
+    invert_colors,
+    photometric,
+    rotate,
+    shuffle_channels,
+    solarize,
+    to_grayscale,
+    to_sepia,
+    vertical_flip,
+)
 from mv3d.detection.train import LabeledFrame, leave_one_camera_out, write_augmented_dataset
 
 
@@ -72,3 +84,26 @@ def test_leave_one_camera_out_holds_out_each_camera():
         assert held not in {frame.camera_id for frame in train}
         assert len(valid) == 2
         assert len(train) == 8
+
+
+def test_color_variants_keep_shape_and_boxes():
+    image = np.zeros((12, 16, 3), dtype=np.uint8)
+    image[0, 0] = (10, 40, 200)
+    boxes = [(1.0, 1.0, 8.0, 8.0)]
+    gray = to_grayscale(image)
+    assert gray.shape == image.shape
+    assert gray[0, 0, 0] == gray[0, 0, 1] == gray[0, 0, 2]
+    inverted = invert_colors(image)
+    assert tuple(int(value) for value in inverted[0, 0]) == (245, 215, 55)
+    assert to_sepia(image).shape == image.shape
+    shuffled = shuffle_channels(image, random.Random(0))
+    assert sorted(int(value) for value in shuffled[0, 0]) == [10, 40, 200]
+    assert not np.array_equal(shuffled[0, 0], image[0, 0])
+    solar = solarize(image, threshold=128)
+    assert int(solar[0, 0, 0]) == 10
+    assert int(solar[0, 0, 2]) == 55
+    names = {name for name, _view, view_boxes in expand_views(image, boxes, random.Random(1))}
+    assert {"gray", "invert", "sepia", "channels", "solar"} <= names
+    for _name, _view, view_boxes in expand_views(image, boxes, random.Random(1)):
+        if _name in {"gray", "invert", "sepia", "channels", "solar"}:
+            assert view_boxes == boxes

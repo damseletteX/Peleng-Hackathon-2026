@@ -47,6 +47,20 @@ TRUCK_TRAIN_AUG: dict = {
     },
     "GaussianBlur": {"blur_limit": 3, "p": 0.25},
     "GaussNoise": {"std_range": (0.01, 0.04), "p": 0.25},
+    "ToGray": {"num_output_channels": 3, "p": 0.2},
+    "InvertImg": {"p": 0.15},
+    "ToSepia": {"p": 0.15},
+    "ChannelShuffle": {"p": 0.15},
+    "Solarize": {"threshold_range": (0.45, 0.6), "p": 0.15},
+    "Equalize": {"p": 0.2},
+    "CLAHE": {"clip_limit": 2.0, "p": 0.25},
+    "RandomGamma": {"gamma_limit": (80, 130), "p": 0.3},
+    "RGBShift": {
+        "r_shift_limit": 15,
+        "g_shift_limit": 15,
+        "b_shift_limit": 15,
+        "p": 0.3,
+    },
 }
 
 
@@ -118,6 +132,47 @@ def crop(
     return cropped, _clip(kept, cropped.shape[1], cropped.shape[0])
 
 
+def to_grayscale(image: np.ndarray) -> np.ndarray:
+    """Чёрно-белый кадр в трёх каналах. Рамка не меняется."""
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    return cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+
+
+def invert_colors(image: np.ndarray) -> np.ndarray:
+    """Негатив: каждый канал становится 255 минус значение."""
+    return cv2.bitwise_not(image)
+
+
+def to_sepia(image: np.ndarray) -> np.ndarray:
+    """Тёплый сепия-тон. Матрица задана в BGR."""
+    matrix = np.array(
+        [
+            [0.272, 0.534, 0.131],
+            [0.349, 0.686, 0.168],
+            [0.393, 0.769, 0.189],
+        ],
+        dtype=np.float32,
+    )
+    toned = cv2.transform(image, matrix)
+    return np.clip(toned, 0, 255).astype(np.uint8)
+
+
+def shuffle_channels(image: np.ndarray, rng: random.Random) -> np.ndarray:
+    """Случайный порядок каналов BGR, не исходный."""
+    order = [0, 1, 2]
+    while order == [0, 1, 2]:
+        rng.shuffle(order)
+    return np.ascontiguousarray(image[:, :, order])
+
+
+def solarize(image: np.ndarray, threshold: int = 128) -> np.ndarray:
+    """Яркие пиксели инвертируются, тёмные остаются."""
+    result = image.copy()
+    mask = image >= threshold
+    result[mask] = 255 - image[mask]
+    return result
+
+
 def photometric(image: np.ndarray, rng: random.Random) -> np.ndarray:
     """Яркость, контраст и лёгкое размытие. Рамки не двигаются."""
     alpha = rng.uniform(0.8, 1.25)
@@ -153,6 +208,11 @@ def expand_views(
             views.append(("crop", cropped, cropped_boxes))
 
     views.append(("color", photometric(image, rng), list(boxes)))
+    views.append(("gray", to_grayscale(image), list(boxes)))
+    views.append(("invert", invert_colors(image), list(boxes)))
+    views.append(("sepia", to_sepia(image), list(boxes)))
+    views.append(("channels", shuffle_channels(image, rng), list(boxes)))
+    views.append(("solar", solarize(image), list(boxes)))
     return [(name, view, view_boxes) for name, view, view_boxes in views if view_boxes]
 
 
