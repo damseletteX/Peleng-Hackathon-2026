@@ -26,14 +26,6 @@ class BoxKeeper:
         self.last_live: Detection | None = None
         self._pending: np.ndarray | None = None
         self._pending_hits = 0
-        self._size: tuple[int, int] | None = None
-
-    def wants_faint(self) -> bool:
-        """Нужен повторный проход с низким порогом: объект на краю или только что пропал."""
-        if self.box is None or self._size is None:
-            return False
-        width, height = self._size
-        return self.miss > 0 or _touches_border(self.box, width, height)
 
     def update(
         self,
@@ -41,7 +33,6 @@ class BoxKeeper:
         width: int,
         height: int,
     ) -> np.ndarray | None:
-        self._size = (width, height)
         self.last_live = None
         match = self._match(detections)
         if self.box is None:

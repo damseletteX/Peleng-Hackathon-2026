@@ -11,7 +11,7 @@ import numpy as np
 import yaml
 
 from mv3d.calibration.camera_model import Camera, load_camera_track
-from mv3d.detection.detector import Detection, VehicleDetector  #, select_truck_boxes
+from mv3d.detection.detector import Detection, VehicleDetector
 from mv3d.detection.keypoints import reference_pixel
 from mv3d.detection.quality import observation_weight
 from mv3d.geometry.triangulate import intersect_ray_plane, triangulate_points
@@ -253,9 +253,6 @@ def _observe(
     ):
         camera = pose_track[min(frame_id, len(pose_track) - 1)]
         height, width = image.shape[:2]
-        # if keeper.wants_faint():
-        #     faint = detector.detect(image, score_threshold=0.05)
-        #     found = select_truck_boxes(found + faint, float(width * height))
         stable = keeper.update(found, width, height)
         live = [] if keeper.last_live is None else [keeper.last_live]
         tracked = tracker.update(detections_to_supervision(live))
@@ -656,16 +653,6 @@ def _draw_stable(canvas: np.ndarray, box: np.ndarray, live: Detection | None) ->
     else:
         label = f"truck {live.score:.2f}"
     _draw_box(canvas, box, label, (0, 210, 255), held=live is None)
-
-
-def _draw_detection(canvas: np.ndarray, view: View) -> None:
-    label = (
-        f"truck ID:{view.track_id} {view.detection.score:.2f} "
-        f"w={view.weight:.2f}"
-    )
-    _draw_box(canvas, np.array(view.detection.bbox), label, (0, 210, 255), held=False)
-    center = tuple(round(float(v)) for v in view.pixel)
-    cv2.circle(canvas, center, 4, (0, 210, 255), -1)
 
 
 def _draw_box(canvas, box, label, color, held: bool) -> None:

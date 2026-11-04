@@ -50,13 +50,3 @@ def track_id_at(detections: sv.Detections, index: int) -> int:
     if detections.tracker_id is None:
         return -1
     return int(detections.tracker_id[index])
-
-
-def coasting_boxes(tracker: ByteTrackTracker) -> list[tuple[int, np.ndarray]]:
-    """Предсказанные боксы треков, у которых на этом кадре нет детекции."""
-    boxes: list[tuple[int, np.ndarray]] = []
-    for track in tracker.tracks:
-        if track.tracker_id < 0 or track.time_since_update <= 0:
-            continue
-        boxes.append((int(track.tracker_id), np.asarray(track.get_state_bbox(), dtype=np.float64)))
-    return boxes
