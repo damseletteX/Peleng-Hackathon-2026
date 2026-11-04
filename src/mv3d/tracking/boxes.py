@@ -10,6 +10,8 @@ _START_HITS = 2
 _INSIDE_HOLD = 8
 # У края держим дольше: в кадре может оставаться узкая полоска.
 _EDGE_HOLD = 90
+# Высота помнится дольше кадра. Смаз в конце растягивает верх, пока низ стоит.
+_HEIGHT_GROWTH = 0.03
 
 
 class BoxKeeper:
@@ -27,6 +29,7 @@ class BoxKeeper:
         self._pending: np.ndarray | None = None
         self._pending_hits = 0
         self._size: tuple[int, int] | None = None
+        self._body_height: float | None = None
 
     def wants_faint(self) -> bool:
         """Нужен повторный проход с низким порогом: объект на краю или только что пропал."""
@@ -53,13 +56,17 @@ class BoxKeeper:
             self._adopt(match)
         else:
             self.box = self.box + self.velocity
+            # Горизонтальный ход оставляем: бокс должен доехать до края.
+            # Вертикальный гасим, чтобы один смазанный кадр не уносил бокс вверх.
+            self.velocity[1] *= 0.5
+            self.velocity[3] *= 0.5
             self.miss += 1
         if self.box is None or _fully_outside(self.box, width, height):
-            self.box = None
+            self._drop()
             return None
         limit = _EDGE_HOLD if _touches_border(self.box, width, height) else _INSIDE_HOLD
         if self.miss > limit:
-            self.box = None
+            self._drop()
             return None
         return self.box.copy()
 
@@ -82,18 +89,55 @@ class BoxKeeper:
             return None
         return box.copy()
 
+    def _drop(self) -> None:
+        self.box = None
+        self._body_height = None
+
     def _adopt(self, detection: Detection) -> None:
         new = np.asarray(detection.bbox, dtype=np.float64)
         if self.box is not None:
+            new = self._limit_height(new)
             delta = new - self.box
             self.velocity = 0.6 * self.velocity + 0.4 * delta
             self.box = 0.75 * new + 0.25 * (self.box + self.velocity)
         else:
             self.box = new
+            self._body_height = float(new[3] - new[1])
         self.miss = 0
-        self.last_live = detection
+        self.last_live = Detection(
+            bbox=(float(self.box[0]), float(self.box[1]), float(self.box[2]), float(self.box[3])),
+            score=detection.score,
+            label=detection.label,
+            label_id=detection.label_id,
+        )
         self._pending = None
         self._pending_hits = 0
+
+    def _limit_height(self, new: np.ndarray) -> np.ndarray:
+        """Не давать верху уехать, если низ бокса почти не двигается."""
+        previous = self.box
+        if previous is None:
+            return new
+        remembered = self._body_height
+        if remembered is None or remembered < 8.0:
+            remembered = float(previous[3] - previous[1])
+        cap = max(remembered * (1.0 + _HEIGHT_GROWTH), remembered + 2.0)
+        out = new.copy()
+        if float(new[3] - new[1]) > cap:
+            top_moved = abs(float(new[1] - previous[1]))
+            bottom_moved = abs(float(new[3] - previous[3]))
+            if top_moved >= bottom_moved:
+                out[3] = new[3]
+                out[1] = float(new[3]) - cap
+            else:
+                out[1] = new[1]
+                out[3] = float(new[1]) + cap
+        used = float(out[3] - out[1])
+        if used <= remembered:
+            self._body_height = 0.7 * remembered + 0.3 * used
+        else:
+            self._body_height = 0.97 * remembered + 0.03 * used
+        return out
 
     def _match(self, detections: list[Detection]) -> Detection | None:
         if not detections:
