@@ -1,19 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 
-# COCO id грузовика. Детектор оставляет только этот класс.
+# COCO id грузовика. Предобученный nano отдаёт этот id, дообученный — имя класса.
 TRUCK_LABEL_ID = 8
 VEHICLE_LABELS = {TRUCK_LABEL_ID: "truck"}
 PREFERRED_LABELS = ("truck",)
-
-_MODEL_FACTORIES = {
-    "small": "RFDETRSmall",
-    "medium": "RFDETRMedium",
-    "large": "RFDETRLarge",
-}
+FINETUNED_WEIGHTS = Path("weights/rfdetr-nano-truck.pth")
 
 
 @dataclass(frozen=True)
@@ -67,29 +63,43 @@ def _iou(left: Detection, right: Detection) -> float:
 
 
 class VehicleDetector:
-    """Детектор грузовика: RF-DETR (Apache-2.0, веса COCO).
+    """RF-DETR Nano, класс truck.
 
-    По умолчанию Medium: тот же класс моделей, что уже стоит в проекте,
-    без дообучения. Класс truck отбирается по имени COCO.
+    Если лежит дообученный чекпоинт, берётся он. Иначе — предобученные веса COCO.
     """
 
-    def __init__(self, score_threshold: float = 0.15, model_size: str = "medium") -> None:
-        if model_size not in _MODEL_FACTORIES:
-            known = ", ".join(_MODEL_FACTORIES)
-            raise ValueError(f"Размер модели должен быть одним из: {known}.")
+    def __init__(
+        self,
+        score_threshold: float = 0.15,
+        *,
+        pretrained: bool = False,
+        weights: str | Path | None = None,
+    ) -> None:
         import rfdetr
 
         self.score_threshold = score_threshold
-        self.model_size = model_size
-        factory = getattr(rfdetr, _MODEL_FACTORIES[model_size])
-        self.model = factory()
+        self.weights_path = _resolve_weights(pretrained=pretrained, weights=weights)
+        if self.weights_path is None:
+            self.model = rfdetr.RFDETRNano()
+        else:
+            self.model = rfdetr.from_checkpoint(self.weights_path, trust_checkpoint=True)
 
-    def detect(self, image_bgr: np.ndarray) -> list[Detection]:
+    def detect(
+        self,
+        image_bgr: np.ndarray,
+        score_threshold: float | None = None,
+    ) -> list[Detection]:
+        threshold = self.score_threshold if score_threshold is None else score_threshold
+        detections = self._detect_rfdetr(image_bgr, threshold)
+        height, width = image_bgr.shape[:2]
+        return select_truck_boxes(detections, float(width * height))
+
+    def _detect_rfdetr(self, image_bgr: np.ndarray, threshold: float) -> list[Detection]:
         import cv2
         from rfdetr.assets.coco_classes import COCO_CLASSES
 
         rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
-        raw = self.model.predict(rgb, threshold=self.score_threshold)
+        raw = self.model.predict(rgb, threshold=threshold)
         if raw.xyxy is None or len(raw.xyxy) == 0:
             return []
 
@@ -115,11 +125,23 @@ class VehicleDetector:
                     label_id=int(class_id) if int(class_id) > 0 else TRUCK_LABEL_ID,
                 )
             )
-        height, width = image_bgr.shape[:2]
-        return select_truck_boxes(detections, float(width * height))
+        return detections
 
     def detect_best(self, image_bgr: np.ndarray) -> Detection | None:
         detections = self.detect(image_bgr)
         if not detections:
             return None
         return max(detections, key=lambda item: item.score)
+
+
+def _resolve_weights(*, pretrained: bool, weights: str | Path | None) -> Path | None:
+    if weights is not None:
+        path = Path(weights)
+        if not path.is_file():
+            raise FileNotFoundError(f"Нет весов: {path}")
+        return path
+    if pretrained:
+        return None
+    if FINETUNED_WEIGHTS.is_file():
+        return FINETUNED_WEIGHTS
+    return None

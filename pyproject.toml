@@ -11,7 +11,7 @@ dependencies = [
     "PyYAML>=6.0",
     "torch>=2.4",
     "torchvision>=0.19",
-    "rfdetr==1.11.2",
+    "rfdetr[train,augment]==1.11.2",
     "supervision>=0.31.3",
     "trackers>=2.6.1",
 ]
@@ -29,9 +29,9 @@ testpaths = ["tests"]
 line-length = 100
 target-version = "py312"
 
-[project.scripts]
-peleng-hackathon-2026 = "peleng_hackathon_2026:main"
-
 [build-system]
 requires = ["uv_build>=0.13.6,<0.14.0"]
 build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "mv3d"
