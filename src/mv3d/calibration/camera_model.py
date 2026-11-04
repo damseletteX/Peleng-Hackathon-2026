@@ -154,6 +154,7 @@ def load_camera_track(
     camera_id: str,
     width: int = 1280,
     height: int = 720,
+    focal_mm: float | None = None,
 ) -> list[Camera]:
     """Поза камеры на каждом кадре CSV."""
     csv_path = Path(path)
@@ -163,7 +164,7 @@ def load_camera_track(
     if not rows:
         raise ValueError(f"В {csv_path.name} нет кадров.")
 
-    focal_mm = _parse_focal_mm(header, camera_id)
+    focal_mm = _parse_focal_mm(header, camera_id, fallback=focal_mm)
     intrinsics = CameraIntrinsics(width=width, height=height, focal_mm=focal_mm)
     cameras: list[Camera] = []
     for line in rows:
@@ -189,19 +190,27 @@ def load_camera_from_csv(
     frame: int = 0,
     width: int = 1280,
     height: int = 720,
+    focal_mm: float | None = None,
 ) -> Camera:
-    track = load_camera_track(path, camera_id, width=width, height=height)
+    track = load_camera_track(
+        path, camera_id, width=width, height=height, focal_mm=focal_mm
+    )
     if frame < 0 or frame >= len(track):
         raise ValueError(f"Кадр {frame} отсутствует в {Path(path).name}.")
     return track[frame]
 
 
-def _parse_focal_mm(header: str, camera_id: str) -> float:
+def _parse_focal_mm(header: str, camera_id: str, fallback: float | None = None) -> float:
     tokens = [token.strip() for token in header.split(";")]
     for index, token in enumerate(tokens):
         if "focal" in token.lower() and index + 1 < len(tokens) and tokens[index + 1]:
             return float(tokens[index + 1].replace(",", "."))
-    return make_project_intrinsics()[camera_id].focal_mm
+    if fallback is not None:
+        return float(fallback)
+    known = make_project_intrinsics()
+    if camera_id not in known:
+        raise ValueError(f"Для {camera_id} не задан фокус.")
+    return known[camera_id].focal_mm
 
 
 def main() -> None:

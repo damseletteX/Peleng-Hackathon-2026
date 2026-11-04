@@ -38,6 +38,7 @@ class CameraSource:
     camera_id: str
     video: Path
     calibration: Path
+    focal_mm: float | None = None
 
 
 @dataclass
@@ -59,11 +60,16 @@ def run_tracking(
     output_root: str | Path = "outputs",
     write_csv: bool = True,
     write_video: bool = True,
+    camera: str | None = None,
+    write_plots: bool | None = None,
+    should_stop=None,
 ) -> Path:
-    """Один грузовик по всем камерам из cameras.yml, у которых есть видео."""
-    if not write_csv and not write_video:
-        raise SystemExit("Нужен выход: CSV, видео или оба.")
-    plane_z, sources = _load_sources(Path(config_path))
+    """Один грузовик по камерам из конфига. camera — только этот id."""
+    if write_plots is None:
+        write_plots = write_csv
+    if not write_csv and not write_video and not write_plots:
+        raise SystemExit("Нужен выход: CSV, графики, видео или их сочетание.")
+    plane_z, sources = _load_sources(Path(config_path), camera=camera)
     if not sources:
         raise SystemExit("В конфиге нет камер с существующим видео.")
 
@@ -75,6 +81,8 @@ def run_tracking(
     pieces = []
     if write_csv:
         pieces.append("CSV")
+    if write_plots:
+        pieces.append("графики")
     if write_video:
         pieces.append("видео")
     print(f"Выход: {', '.join(pieces)}. Модель: RF-DETR nano.", flush=True)
@@ -91,7 +99,10 @@ def run_tracking(
         trackers = [make_truck_tracker(fps) for _ in sources]
         keepers = [BoxKeeper() for _ in sources]
         poses = [
-            load_camera_track(source.calibration, source.camera_id) for source in sources
+            load_camera_track(
+                source.calibration, source.camera_id, focal_mm=source.focal_mm
+            )
+            for source in sources
         ]
         motion = TrajectoryFilter()
         locked_id: str | None = None
@@ -103,6 +114,9 @@ def run_tracking(
             gt = _load_gt()
             frame_id = 0
             while frames == 0 or frame_id < frames:
+                if should_stop is not None and should_stop():
+                    print("Остановлено.", flush=True)
+                    break
                 images = _read_frames(captures)
                 if images is None:
                     break
@@ -146,13 +160,14 @@ def run_tracking(
                         flush=True,
                     )
                 frame_id += 1
-            if frame_id == 0:
+            if frame_id == 0 and not (should_stop is not None and should_stop()):
                 raise RuntimeError("Не прочитан ни один кадр.")
-        if write_csv:
+        if write_plots:
             _write_topdown(output / "trajectory_topdown.png", trajectory)
             plot = output / "coordinates_time.png"
             write_coordinate_plot(plot, [(frame, xyz) for frame, xyz, _ in trajectory], gt)
             print(f"Графики: {plot.resolve()}", flush=True)
+        if write_csv:
             print(f"Ошибки по кадрам: {(output / 'errors.csv').resolve()}", flush=True)
         _report_gt(trajectory)
     finally:
@@ -166,19 +181,38 @@ def run_tracking(
     return output
 
 
-def _load_sources(config_path: Path) -> tuple[float, list[CameraSource]]:
+def _load_sources(
+    config_path: Path,
+    camera: str | None = None,
+) -> tuple[float, list[CameraSource]]:
     data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     plane_z = float(data.get("object_plane_z_cm", 300.0))
+    cameras = data["cameras"]
+    if camera is not None:
+        if camera not in cameras:
+            known = ", ".join(cameras)
+            raise SystemExit(f"Камеры {camera} нет в конфиге. Доступны: {known}")
+        cameras = {camera: cameras[camera]}
     sources: list[CameraSource] = []
     missing: list[str] = []
-    for camera_id, cfg in data["cameras"].items():
+    for camera_id, cfg in cameras.items():
         video = cfg.get("video")
         calibration = cfg.get("calibration")
-        video_path = Path(video) if video else None
-        if video_path is None or not video_path.is_file() or not calibration:
+        if not video:
+            continue
+        video_path = Path(video)
+        focal = cfg.get("focal_mm")
+        if not video_path.is_file() or not calibration:
             missing.append(camera_id)
             continue
-        sources.append(CameraSource(camera_id, video_path, Path(calibration)))
+        sources.append(
+            CameraSource(
+                camera_id,
+                video_path,
+                Path(calibration),
+                None if focal is None else float(focal),
+            )
+        )
     if missing:
         names = ", ".join(missing)
         raise SystemExit(f"Нет видео или калибровки для камер: {names}")

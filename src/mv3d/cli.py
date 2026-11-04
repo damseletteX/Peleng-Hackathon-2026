@@ -75,6 +75,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     train.add_argument("--output", default="outputs/rfdetr_nano")
     train.add_argument("--weights", default="weights/rfdetr-nano-truck.pth")
     train.add_argument("--seed", type=int, default=0)
+
+    sub.add_parser("ui", help="Окно: видео, CSV, графики и ролики с боксами")
     return parser.parse_args(argv)
 
 
@@ -86,6 +88,11 @@ def _add_run_args(
 ) -> None:
     parser.set_defaults(write_csv=write_csv, write_video=write_video)
     parser.add_argument("--config", default="configs/cameras.yml")
+    parser.add_argument(
+        "--camera",
+        default=None,
+        help="Только эта камера из конфига, например cam1",
+    )
     parser.add_argument("--frames", type=int, default=0, help="0 — все кадры")
     parser.add_argument("--score", type=float, default=0.15)
     parser.add_argument("--out", default="outputs")
@@ -188,6 +195,7 @@ def _run_track(args: argparse.Namespace) -> int:
         output_root=args.out,
         write_csv=args.write_csv,
         write_video=args.write_video,
+        camera=args.camera,
     )
     return 0
 
@@ -227,8 +235,18 @@ def main(argv: list[str] | None = None) -> int:
         return _run_score(args)
     if args.command == "train":
         return _run_train(args)
+    if args.command == "ui":
+        return _run_ui()
     parse_args(["--help"])
     return 0
+
+
+def _run_ui() -> int:
+    try:
+        from mv3d.ui.app import main as ui_main
+    except ImportError as exc:
+        raise SystemExit(f"Не удалось открыть окно: {exc}") from exc
+    return ui_main()
 
 
 if __name__ == "__main__":
