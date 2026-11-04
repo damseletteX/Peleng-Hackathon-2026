@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from mv3d import __version__
@@ -61,3 +63,12 @@ def test_load_sources_keeps_one_camera(tmp_path):
 
     with pytest.raises(SystemExit, match="cam9"):
         _load_sources(config, camera="cam9")
+
+
+def test_disabled_cameras_stay_out_unless_named():
+    _, sources = _load_sources(Path("configs/cameras.yml"))
+    assert [source.camera_id for source in sources] == ["cam1", "cam3"]
+    assert sources[1].frame_offset == 360
+
+    _, only = _load_sources(Path("configs/cameras.yml"), camera="cam5")
+    assert [source.camera_id for source in only] == ["cam5"]

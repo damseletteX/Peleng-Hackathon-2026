@@ -380,7 +380,12 @@ class TrackerWindow(QMainWindow):
         self.top_plot.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.top_plot.setMinimumHeight(180)
         self.top_plot.setStyleSheet("background: #181818; border-radius: 8px;")
+        self.error_plot = QLabel("График MSE и RMSE от времени появится после прогона.")
+        self.error_plot.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.error_plot.setMinimumHeight(220)
+        self.error_plot.setStyleSheet("background: #181818; border-radius: 8px; color: #888;")
         graph_col.addWidget(self.time_plot, stretch=2)
+        graph_col.addWidget(self.error_plot, stretch=2)
         graph_col.addWidget(self.top_plot, stretch=1)
         self.tabs.addTab(graph, "Графики")
         self.coord_page = QWidget()
@@ -831,6 +836,7 @@ class TrackerWindow(QMainWindow):
 
     def _show_plots(self, folder: Path) -> None:
         self._set_plot(self.time_plot, folder / "coordinates_time.png", "Нет графика координат.")
+        self._set_plot(self.error_plot, folder / "error_time.png", "Нет графика MSE и RMSE.")
         self._set_plot(self.top_plot, folder / "trajectory_topdown.png", "")
 
     def _set_plot(self, label: QLabel, path: Path, empty: str) -> None:

@@ -59,6 +59,9 @@ def test_save_camera_list_keeps_preamble_and_video(tmp_path):
     saved = load_camera_entries(config)
     assert [entry.camera_id for entry in saved] == ["cam1", "cam2", "cam3", "cam4", "cam5", "cam6"]
     assert saved[0].video.endswith("cam1.mp4")
+    kept = yaml.safe_load(text)
+    assert kept["cameras"]["cam3"]["frame_offset"] == 360
+    assert kept["cameras"]["cam2"]["enabled"] is False
     assert saved[-1].focal_mm == 28.0
     assert saved[-1].video == ""
 

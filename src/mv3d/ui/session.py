@@ -108,7 +108,13 @@ def save_camera_list(config_path: str | Path, entries: list[CameraEntry]) -> Non
         if not entry.calibration:
             raise ValueError(f"Для {camera_id} не выбрана калибровка.")
         old = previous.get(camera_id) or {}
+        kept = {
+            key: value
+            for key, value in old.items()
+            if key not in {"video", "calibration", "focal_mm"}
+        }
         cameras[camera_id] = {
+            **kept,
             "video": _as_project_path(str(entry.video or old.get("video") or "")),
             "calibration": _as_project_path(entry.calibration),
             "focal_mm": float(entry.focal_mm),

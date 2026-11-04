@@ -2,7 +2,8 @@ import numpy as np
 
 from mv3d.calibration.camera_model import load_camera_from_csv
 from mv3d.detection.detector import Detection
-from mv3d.tracking.pipeline import View, _views_for_fusion
+from mv3d.tracking.motion import TrajectoryFilter
+from mv3d.tracking.pipeline import View, _draw_heading, _views_for_fusion
 
 
 def _view(camera, pixel, bbox, weight):
@@ -49,3 +50,21 @@ def test_disagreeing_views_do_not_start_a_joint_track():
     chosen, _locked = _views_for_fusion([light, heavy], 300.0, None)
     assert len(chosen) == 1
     assert chosen[0].weight == 0.9
+
+
+def test_draw_heading_uses_the_motion_vector():
+    motion = TrajectoryFilter()
+    motion.x = np.array([0.0, 0.0, 0.0, 400.0, 0.0, 0.0])
+    fallback = np.array([0.0, 1.0])
+    body = _draw_heading(motion, fallback)
+    assert body is not None
+    assert np.allclose(body, [1.0, 0.0])
+
+
+def test_draw_heading_falls_back_when_the_truck_is_slow():
+    motion = TrajectoryFilter()
+    motion.x = np.array([0.0, 0.0, 0.0, 10.0, 0.0, 0.0])
+    fallback = np.array([0.0, 1.0])
+    body = _draw_heading(motion, fallback)
+    assert body is not None
+    assert np.allclose(body, fallback)

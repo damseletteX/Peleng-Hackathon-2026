@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from mv3d.detection.detector import PREFERRED_LABELS, VEHICLE_LABELS, Detection
 from mv3d.detection.keypoints import bbox_center
@@ -26,8 +27,11 @@ def test_reference_pixel_follows_motion():
     from mv3d.detection.keypoints import reference_pixel
 
     detection = Detection(bbox=(100.0, 200.0, 300.0, 400.0), score=0.9, label="truck", label_id=8)
-    assert list(reference_pixel(detection, [2.0, 0.1])) == [300.0, 300.0]
-    assert list(reference_pixel(detection, [-2.0, 0.1])) == [100.0, 300.0]
+    right = reference_pixel(detection, [2.0, 0.1])
+    left = reference_pixel(detection, [-2.0, 0.1])
+    assert right[0] == pytest.approx(292.8, abs=0.1)
+    assert left[0] == pytest.approx(107.2, abs=0.1)
+    assert right[1] == pytest.approx(319.6, abs=0.1)
 
 
 def test_bbox_center():

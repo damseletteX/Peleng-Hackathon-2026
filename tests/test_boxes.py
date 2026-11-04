@@ -76,11 +76,13 @@ def test_score_reads_a_finished_track(tmp_path):
     from mv3d.tracking.pipeline import score_coordinates
 
     gt = tmp_path / "gt.csv"
-    gt.write_text("Frame;Loc_X;Loc_Y;Loc_Z\n0;0;0;0\n1;10;0;0\n", encoding="utf-8")
+    gt.write_text("Frame;Loc_X;Loc_Y;Loc_Z\n0;0;0;0\n1;10;0;0\n2;20;0;0\n", encoding="utf-8")
     track = tmp_path / "track.csv"
-    track.write_text("Frame;Loc_X;Loc_Y;Loc_Z\n0;3;4;0\n1;;;\n", encoding="utf-8")
+    track.write_text("Frame;Loc_X;Loc_Y;Loc_Z\n0;3;4;0\n1;;;\n2;22;0;0\n", encoding="utf-8")
     out = score_coordinates(track, gt_path=gt)
     text = out.read_text(encoding="utf-8").splitlines()
     assert text[0] == "Frame;Err_X;Err_Y;Err_Z;Dist_cm"
     assert text[1].startswith("0;3.0000;4.0000;0.0000;5.0000")
     assert text[2] == "1;;;;"
+    errors_plot = track.with_name("error_time.png")
+    assert errors_plot.is_file()

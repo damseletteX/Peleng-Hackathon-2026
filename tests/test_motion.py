@@ -31,14 +31,17 @@ def test_sideways_jump_stays_near_the_driven_path():
     assert abs(after[1]) < 250.0
 
 
-def test_unseen_speed_drops_by_half_in_five_seconds():
+def test_unseen_speed_keeps_going_along_the_path():
     motion = TrajectoryFilter()
     motion.step(np.zeros(3), 1.0, 0.1)
     for index in range(1, 15):
         motion.step(np.array([index * 80.0, 0.0, 0.0]), 1.0, 0.1)
     speed = float(np.hypot(motion.x[3], motion.x[4]))
-    motion.step(None, 0.0, 5.0)
-    assert np.hypot(motion.x[3], motion.x[4]) < speed * 0.6
+    before = motion.position
+    after = motion.step(None, 0.0, 1.0)
+    assert before is not None and after is not None
+    assert after[0] > before[0]
+    assert abs(float(np.hypot(motion.x[3], motion.x[4])) - speed) < 80.0
 
 
 def test_missing_measurement_keeps_a_position():

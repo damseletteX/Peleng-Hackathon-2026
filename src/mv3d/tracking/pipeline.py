@@ -14,6 +14,7 @@ from mv3d.calibration.camera_model import Camera, load_camera_track
 from mv3d.detection.detector import Detection, VehicleDetector
 from mv3d.detection.keypoints import reference_pixel
 from mv3d.detection.quality import observation_weight
+from mv3d.geometry.box3d import draw_truck, heading_from_box
 from mv3d.geometry.triangulate import intersect_ray_plane, triangulate_points
 from mv3d.tracking.boxes import BoxKeeper
 from mv3d.tracking.motion import TrajectoryFilter
@@ -39,6 +40,7 @@ class CameraSource:
     video: Path
     calibration: Path
     focal_mm: float | None = None
+    frame_offset: int = 0
 
 
 @dataclass
@@ -78,7 +80,8 @@ def run_tracking(
     output.mkdir(parents=True)
     print("Камеры:", flush=True)
     for source in sources:
-        print(f"  {source.camera_id}: {source.video}", flush=True)
+        shift = "" if source.frame_offset == 0 else f", кадр +{source.frame_offset}"
+        print(f"  {source.camera_id}: {source.video}{shift}", flush=True)
     pieces = []
     if write_csv:
         pieces.append("CSV")
@@ -90,7 +93,7 @@ def run_tracking(
     print("\nЗагрузка RF-DETR nano.", flush=True)
 
     detector = VehicleDetector(score_threshold=score_threshold)
-    captures = [cv2.VideoCapture(str(source.video)) for source in sources]
+    captures = [_open_capture(source) for source in sources]
     writers: list[cv2.VideoWriter | None] = [None] * len(sources)
     try:
         if any(not capture.isOpened() for capture in captures):
@@ -133,8 +136,11 @@ def run_tracking(
                     dt,
                     draw=write_video,
                 )
+                heading = _heading(motion)
+                if heading is None and views:
+                    heading = heading_from_box(views[0].camera, views[0].detection)
                 measurement, weight, locked_id = _fuse(
-                    views, plane_z, motion.peek(dt), locked_id
+                    views, plane_z, motion.peek(dt), locked_id, heading
                 )
                 has_measurement = measurement is not None
                 position = motion.step(
@@ -145,6 +151,8 @@ def run_tracking(
                 if position is not None:
                     trajectory.append((frame_id, position.copy(), measurement is not None))
                     if write_video:
+                        body = _draw_heading(motion, heading)
+                        _draw_bodies(canvases, sources, poses, frame_id, position, body)
                         _stamp(canvases, sources, frame_id, position, views)
                 if write_csv:
                     _write_track_rows(
@@ -170,8 +178,13 @@ def run_tracking(
         if write_plots:
             _write_topdown(output / "trajectory_topdown.png", trajectory)
             plot = output / "coordinates_time.png"
-            write_coordinate_plot(plot, [(frame, xyz) for frame, xyz, _ in trajectory], gt)
+            series = [(frame, xyz) for frame, xyz, _ in trajectory]
+            write_coordinate_plot(plot, series, gt)
+            errors_plot = output / "error_time.png"
+            write_error_time_plot(errors_plot, series, gt)
             print(f"Графики: {plot.resolve()}", flush=True)
+            if errors_plot.is_file():
+                print(f"MSE и RMSE от времени: {errors_plot.resolve()}", flush=True)
         if write_csv:
             print(f"Ошибки по кадрам: {(output / 'errors.csv').resolve()}", flush=True)
         _report_gt(trajectory, gt)
@@ -201,6 +214,8 @@ def _load_sources(
     sources: list[CameraSource] = []
     missing: list[str] = []
     for camera_id, cfg in cameras.items():
+        if camera is None and cfg.get("enabled", True) is False:
+            continue
         video = cfg.get("video")
         calibration = cfg.get("calibration")
         if not video:
@@ -216,12 +231,20 @@ def _load_sources(
                 video_path,
                 Path(calibration),
                 None if focal is None else float(focal),
+                int(cfg.get("frame_offset") or 0),
             )
         )
     if missing:
         names = ", ".join(missing)
         raise SystemExit(f"Нет видео или калибровки для камер: {names}")
     return plane_z, sources
+
+
+def _open_capture(source: CameraSource) -> cv2.VideoCapture:
+    capture = cv2.VideoCapture(str(source.video))
+    if source.frame_offset > 0:
+        capture.set(cv2.CAP_PROP_POS_FRAMES, source.frame_offset)
+    return capture
 
 
 def _fps(capture: cv2.VideoCapture) -> float:
@@ -231,13 +254,19 @@ def _fps(capture: cv2.VideoCapture) -> float:
     return fps
 
 
-def _read_frames(captures: list[cv2.VideoCapture]) -> list[np.ndarray] | None:
-    frames: list[np.ndarray] = []
+def _read_frames(captures: list[cv2.VideoCapture]) -> list[np.ndarray | None] | None:
+    """Кадр каждой камеры. None у одной камеры не останавливает остальные."""
+    frames: list[np.ndarray | None] = []
+    any_ok = False
     for capture in captures:
         ok, frame = capture.read()
-        if not ok:
-            return None
-        frames.append(frame)
+        if ok:
+            any_ok = True
+            frames.append(frame)
+        else:
+            frames.append(None)
+    if not any_ok:
+        return None
     return frames
 
 
@@ -247,13 +276,23 @@ def _observe(
     views: list[View] = []
     canvases: list[np.ndarray] = []
     predicted = motion.peek(dt)
-    found_per_camera = detector.detect_batch(images, score_threshold=0.05)
+    present = [index for index, image in enumerate(images) if image is not None]
+    detected = detector.detect_batch(
+        [images[index] for index in present], score_threshold=0.05
+    )
+    found_per_camera: list[list] = [[] for _ in images]
+    for index, found in zip(present, detected, strict=True):
+        found_per_camera[index] = found
     for image, source, pose_track, tracker, keeper, found in zip(
         images, sources, poses, trackers, keepers, found_per_camera, strict=True
     ):
+        if image is None:
+            if draw:
+                canvases.append(np.zeros((720, 1280, 3), dtype=np.uint8))
+            continue
         camera = pose_track[min(frame_id, len(pose_track) - 1)]
         height, width = image.shape[:2]
-        stable = keeper.update(found, width, height)
+        keeper.update(found, width, height)
         live = [] if keeper.last_live is None else [keeper.last_live]
         tracked = tracker.update(detections_to_supervision(live))
         chosen = _choose(
@@ -265,10 +304,7 @@ def _observe(
             views.append(chosen)
         if not draw:
             continue
-        canvas = image.copy()
-        if stable is not None:
-            _draw_stable(canvas, stable, keeper.last_live)
-        canvases.append(canvas)
+        canvases.append(image.copy())
     return views, canvases
 
 
@@ -323,22 +359,42 @@ def _choose(candidates: list[View], camera: Camera, predicted: np.ndarray | None
     return max(pool, key=preference)
 
 
+def _heading(motion: TrajectoryFilter, min_speed: float = 100.0) -> np.ndarray | None:
+    if motion.x is None:
+        return None
+    heading = motion.x[3:5]
+    speed = float(np.hypot(heading[0], heading[1]))
+    if speed < min_speed:
+        return None
+    return heading / speed
+
+
+def _draw_heading(
+    motion: TrajectoryFilter,
+    fallback: np.ndarray | None,
+) -> np.ndarray | None:
+    """Курс фильтра, иначе направление бокса. Вектор нельзя проверять через or."""
+    chosen = _heading(motion)
+    return fallback if chosen is None else chosen
+
+
 def _fuse(
     views: list[View],
     plane_z: float,
     predicted: np.ndarray | None,
     locked_id: str | None = None,
+    heading: np.ndarray | None = None,
 ) -> tuple[np.ndarray | None, float, str | None]:
     """Сложить только камеры, в чьём боксе лежит уже найденный грузовик.
 
-    База — луч одной такой камеры. Триангуляция заменяет его, только если
-    сошлась с этим лучом: чужой вид не уводит точку на сотни метров.
+    База — параллелепипед, который садится в бокс, или луч через низ рамки.
+    Триангуляция заменяет его, только если сошлась с этой точкой.
     """
-    chosen, locked_id = _views_for_fusion(views, plane_z, predicted, locked_id)
+    chosen, locked_id = _views_for_fusion(views, plane_z, predicted, locked_id, heading)
     if not chosen:
         return None, 0.0, locked_id
     weights = [view.weight for view in chosen]
-    point = _closest_monocular(chosen, plane_z, predicted)
+    point = _closest_monocular(chosen, plane_z, predicted, heading)
     if point is None:
         return None, 0.0, locked_id
     if len(chosen) >= 2:
@@ -357,6 +413,7 @@ def _views_for_fusion(
     plane_z: float,
     predicted: np.ndarray | None,
     locked_id: str | None = None,
+    heading: np.ndarray | None = None,
 ) -> tuple[list[View], str | None]:
     positive = [view for view in views if view.weight > 0]
     if not positive:
@@ -366,14 +423,20 @@ def _views_for_fusion(
         if len(chosen) == 1:
             locked_id = chosen[0].camera_id
         return chosen, locked_id
-    ranked = sorted(
-        ((_reprojection_px(view, predicted), view) for view in positive),
-        key=lambda item: item[0],
-    )
-    current = [view for error, view in ranked if view.camera_id == locked_id and error <= _REPROJ_PX]
+    ranked = []
+    for view in positive:
+        point = _monocular_point(view, plane_z, heading)
+        if point is None:
+            continue
+        distance = float(np.hypot(point[0] - predicted[0], point[1] - predicted[1]))
+        ranked.append((distance, view))
+    if not ranked:
+        return [], locked_id
+    ranked.sort(key=lambda item: item[0])
+    current = [view for error, view in ranked if view.camera_id == locked_id and error <= 8000.0]
     if current:
         primary = current[0]
-    elif ranked[0][0] <= 50.0:
+    elif ranked[0][0] <= 4000.0:
         primary = ranked[0][1]
         locked_id = primary.camera_id
     else:
@@ -381,7 +444,7 @@ def _views_for_fusion(
     extras = [
         view
         for error, view in ranked
-        if view.camera_id != primary.camera_id and error <= 40.0
+        if view.camera_id != primary.camera_id and error <= 4000.0
     ]
     return [primary, *extras], locked_id
 
@@ -402,11 +465,12 @@ def _closest_monocular(
     views: list[View],
     plane_z: float,
     predicted: np.ndarray | None,
+    heading: np.ndarray | None = None,
 ) -> np.ndarray | None:
     best_point = None
     best_key = None
     for view in views:
-        point = _monocular_point(view, plane_z)
+        point = _monocular_point(view, plane_z, heading)
         if point is None:
             continue
         if predicted is None:
@@ -440,7 +504,11 @@ def _cluster_monocular(views: list[View], plane_z: float) -> list[View]:
     return [view for view, _ in group(best)]
 
 
-def _monocular_point(view: View, plane_z: float) -> np.ndarray | None:
+def _monocular_point(
+    view: View,
+    plane_z: float,
+    heading: np.ndarray | None = None,
+) -> np.ndarray | None:
     origin, direction = view.camera.ray_from_pixel(view.pixel)
     return intersect_ray_plane(origin, direction, plane_z=plane_z)
 
@@ -516,7 +584,11 @@ def score_coordinates(
                 squared.append(float(np.sum((position - truth) ** 2)))
     plot = destination.with_name("coordinates_time.png")
     write_coordinate_plot(plot, rows, gt)
+    errors_plot = destination.with_name("error_time.png")
+    write_error_time_plot(errors_plot, rows, gt)
     print(f"Графики: {plot.resolve()}", flush=True)
+    if errors_plot.is_file():
+        print(f"MSE и RMSE от времени: {errors_plot.resolve()}", flush=True)
     if squared:
         mse = float(np.mean(squared))
         print(
@@ -551,6 +623,77 @@ def write_coordinate_plot(
             canvas, name, (8, top + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (40, 40, 40), 2
         )
     cv2.imwrite(str(path), canvas)
+
+
+def write_error_time_plot(
+    path: Path,
+    rows: list[tuple[int, np.ndarray | None]],
+    gt: dict[int, np.ndarray],
+    fps: float = 30.0,
+) -> None:
+    """Накопленные MSE и RMSE от секунды ролика."""
+    squared: list[tuple[float, float]] = []
+    for frame, point in rows:
+        if point is None or frame not in gt:
+            continue
+        squared.append((frame / fps, float(np.sum((point - gt[frame]) ** 2))))
+    if len(squared) < 2:
+        return
+    mse_line: list[tuple[float, float]] = []
+    rmse_line: list[tuple[float, float]] = []
+    total = 0.0
+    for index, (time, value) in enumerate(squared, start=1):
+        total += value
+        mse = total / index
+        mse_line.append((time, mse))
+        rmse_line.append((time, float(np.sqrt(mse))))
+    width, panel, gap = 960, 260, 20
+    canvas = np.full((panel * 2 + gap * 3, width, 3), 255, dtype=np.uint8)
+    t_min, t_max = mse_line[0][0], mse_line[-1][0]
+    _draw_xy(canvas, mse_line, t_min, t_max, gap, panel - 8, width, (200, 80, 0))
+    cv2.putText(
+        canvas, "MSE cm2", (8, gap + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (40, 40, 40), 2
+    )
+    _draw_xy(
+        canvas, rmse_line, t_min, t_max, gap * 2 + panel, panel - 8, width, (0, 140, 220)
+    )
+    cv2.putText(
+        canvas,
+        "RMSE cm",
+        (8, gap * 2 + panel + 22),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.7,
+        (40, 40, 40),
+        2,
+    )
+    cv2.putText(
+        canvas,
+        "s",
+        (width - 28, canvas.shape[0] - 12),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.6,
+        (80, 80, 80),
+        2,
+    )
+    cv2.imwrite(str(path), canvas)
+
+
+def _draw_xy(canvas, points, x_min, x_max, top, height, width, color) -> None:
+    values = [value for _, value in points]
+    if not values:
+        return
+    low, high = min(values), max(values)
+    if high - low < 1.0:
+        high = low + 1.0
+    span = max(x_max - x_min, 1e-6)
+
+    def pixel(x: float, value: float) -> tuple[int, int]:
+        px = 50 + (x - x_min) / span * (width - 80)
+        py = top + height - 16 - (value - low) / (high - low) * (height - 32)
+        return round(px), round(py)
+
+    poly = np.array([pixel(x, value) for x, value in points], dtype=np.int32)
+    cv2.polylines(canvas, [poly], False, color, 2)
 
 
 def _draw_series(canvas, estimate, truth, frame_min, frame_max, top, height, width) -> None:
@@ -647,25 +790,12 @@ def _write_videos(writers, canvases, sources, output, fps):
     return ready
 
 
-def _draw_stable(canvas: np.ndarray, box: np.ndarray, live: Detection | None) -> None:
-    if live is None:
-        label = "truck"
-    else:
-        label = f"truck {live.score:.2f}"
-    _draw_box(canvas, box, label, (0, 210, 255), held=live is None)
-
-
-def _draw_box(canvas, box, label, color, held: bool) -> None:
-    x1, y1, x2, y2 = (round(float(v)) for v in box)
-    height, width = canvas.shape[:2]
-    x1 = int(np.clip(x1, 0, width - 1))
-    x2 = int(np.clip(x2, 0, width - 1))
-    y1 = int(np.clip(y1, 0, height - 1))
-    y2 = int(np.clip(y2, 0, height - 1))
-    cv2.rectangle(canvas, (x1, y1), (x2, y2), color, 1 if held else 2)
-    cv2.putText(
-        canvas, label, (x1, max(22, y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2
-    )
+def _draw_bodies(canvases, sources, poses, frame_id, position, heading) -> None:
+    if heading is None:
+        return
+    for canvas, source, pose_track in zip(canvases, sources, poses, strict=True):
+        camera = pose_track[min(frame_id, len(pose_track) - 1)]
+        draw_truck(canvas, camera, position, heading)
 
 
 def _write_topdown(path: Path, trajectory: list[tuple[int, np.ndarray]]) -> None:
