@@ -4,7 +4,13 @@ import pytest
 import yaml
 
 from mv3d.tracking.pipeline import run_tracking
-from mv3d.ui.session import camera_ids, write_run_config
+from mv3d.ui.session import (
+    CameraEntry,
+    camera_ids,
+    load_camera_entries,
+    save_camera_list,
+    write_run_config,
+)
 
 
 def test_camera_ids_follow_config():
@@ -23,6 +29,25 @@ def test_write_run_config_keeps_calibration(tmp_path):
         "object_transform_CineCameraActor2.csv"
     )
     assert data["object_plane_z_cm"] == 300.0
+
+
+def test_save_camera_list_keeps_preamble_and_video(tmp_path):
+    source = Path("configs/cameras.yml")
+    config = tmp_path / "cameras.yml"
+    config.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+    entries = load_camera_entries(config)
+    calib = entries[0].calibration
+    entries.append(CameraEntry("cam6", calib, 28.0))
+    save_camera_list(config, entries)
+
+    text = config.read_text(encoding="utf-8")
+    assert "object_plane_z_cm" in text
+    assert text.split("cameras:", 1)[0].strip()
+    saved = load_camera_entries(config)
+    assert [entry.camera_id for entry in saved] == ["cam1", "cam2", "cam3", "cam4", "cam5", "cam6"]
+    assert saved[0].video.endswith("cam1.mp4")
+    assert saved[-1].focal_mm == 28.0
+    assert saved[-1].video == ""
 
 
 def test_write_run_config_rejects_unknown_camera(tmp_path):

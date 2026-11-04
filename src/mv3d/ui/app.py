@@ -11,10 +11,10 @@ from PyQt6.QtGui import QDesktopServices, QImage, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QDoubleSpinBox,
     QFileDialog,
     QGridLayout,
     QGroupBox,
-    QDoubleSpinBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -219,8 +219,8 @@ class TrackerWindow(QMainWindow):
         self.catalog_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         self.catalog_table.verticalHeader().setVisible(False)
         self.catalog_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.catalog_table.setMaximumHeight(210)
-        files_col.addWidget(self.catalog_table)
+        self.catalog_table.setMinimumHeight(280)
+        files_col.addWidget(self.catalog_table, stretch=1)
         catalog_actions = QHBoxLayout()
         add_camera = QPushButton("Добавить")
         add_camera.clicked.connect(self._add_camera)
@@ -251,7 +251,7 @@ class TrackerWindow(QMainWindow):
         hint.setWordWrap(True)
         hint.setStyleSheet("color: #8d8d8d; font-weight: 400;")
         files_col.addWidget(hint)
-        left_col.addWidget(files)
+        left_col.addWidget(files, stretch=3)
 
         self.table = QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(["Камера", "Файл", "", "FPS", "Кадры"])
@@ -301,7 +301,7 @@ class TrackerWindow(QMainWindow):
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
         self.log.setPlaceholderText("Здесь будет ход прогона.")
-        self.log.setMaximumHeight(160)
+        self.log.setMaximumHeight(110)
         left_col.addWidget(self.log)
 
         player = QGroupBox("Плеер")
@@ -346,8 +346,91 @@ class TrackerWindow(QMainWindow):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.addWidget(split)
         self.setCentralWidget(root)
+        self._fill_catalog()
+
+    def _fill_catalog(self) -> None:
+        self.catalog_table.setRowCount(0)
+        for entry in load_camera_entries(_CONFIG):
+            self._append_catalog_row(entry.camera_id, entry.calibration, entry.focal_mm)
+        self._sync_count_limit()
+
+    def _append_catalog_row(self, camera_id: str, calibration: str, focal_mm: float) -> None:
+        row = self.catalog_table.rowCount()
+        self.catalog_table.insertRow(row)
+        name = QLineEdit(camera_id)
+        self.catalog_table.setCellWidget(row, 0, name)
+        label = QTableWidgetItem(Path(calibration).name if calibration else "не выбрана")
+        label.setFlags(label.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        label.setData(Qt.ItemDataRole.UserRole, calibration)
+        label.setToolTip(calibration)
+        self.catalog_table.setItem(row, 1, label)
+        focal = QDoubleSpinBox()
+        focal.setRange(1.0, 500.0)
+        focal.setDecimals(1)
+        focal.setValue(focal_mm)
+        self.catalog_table.setCellWidget(row, 2, focal)
+        button = QPushButton("Файл")
+        button.clicked.connect(lambda _checked=False, index=row: self._pick_calibration(index))
+        self.catalog_table.setCellWidget(row, 3, button)
+
+    def _catalog_entries(self) -> list[CameraEntry]:
+        entries: list[CameraEntry] = []
+        for row in range(self.catalog_table.rowCount()):
+            name = self.catalog_table.cellWidget(row, 0).text().strip()
+            calibration = self.catalog_table.item(row, 1).data(Qt.ItemDataRole.UserRole) or ""
+            focal = float(self.catalog_table.cellWidget(row, 2).value())
+            entries.append(CameraEntry(name, str(calibration), focal))
+        return entries
+
+    def _sync_count_limit(self) -> None:
+        count = max(self.catalog_table.rowCount(), 1)
+        self.count_spin.setMaximum(count)
+        if self.catalog_table.rowCount() and self.count_spin.value() > self.catalog_table.rowCount():
+            self.count_spin.setValue(self.catalog_table.rowCount())
+        self.catalog = [entry.camera_id for entry in self._catalog_entries()]
+
+    def _add_camera(self) -> None:
+        used = {entry.camera_id for entry in self._catalog_entries()}
+        number = 1
+        while f"cam{number}" in used:
+            number += 1
+        self._append_catalog_row(f"cam{number}", "", 35.0)
+        self._sync_count_limit()
+
+    def _remove_camera(self) -> None:
+        selected = self.catalog_table.selectionModel().selectedRows()
+        if not selected:
+            QMessageBox.warning(self, "Список", "Выберите камеру в списке.")
+            return
+        self.catalog_table.removeRow(selected[0].row())
+        self._sync_count_limit()
+
+    def _pick_calibration(self, row: int) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Калибровка", "configs/calibration", "CSV (*.csv)"
+        )
+        if not path:
+            return
+        item = self.catalog_table.item(row, 1)
+        item.setText(Path(path).name)
+        item.setData(Qt.ItemDataRole.UserRole, path)
+        item.setToolTip(path)
+
+    def _save_catalog(self) -> bool:
+        try:
+            entries = self._catalog_entries()
+            save_camera_list(_CONFIG, entries)
+        except (OSError, ValueError, yaml.YAMLError) as exc:
+            QMessageBox.warning(self, "Конфиг", str(exc))
+            return False
+        self.catalog = [entry.camera_id for entry in entries]
+        self._sync_count_limit()
+        self._note(f"Список сохранён: {', '.join(self.catalog)}")
+        return True
 
     def _create_table(self) -> None:
+        if not self._save_catalog():
+            return
         self._release_streams()
         self.table.setRowCount(0)
         for camera in self.catalog[: self.count_spin.value()]:
@@ -484,10 +567,14 @@ class TrackerWindow(QMainWindow):
     def _assignments(self) -> dict[str, Path]:
         if self.table.rowCount() == 0:
             raise ValueError("Сначала создайте таблицу камер.")
+        entries = self._catalog_entries()
+        if self.table.rowCount() > len(entries):
+            raise ValueError("Таблица видео длиннее списка. Создайте её заново.")
         chosen: dict[str, Path] = {}
         missing: list[str] = []
         for row in range(self.table.rowCount()):
-            camera = self.table.item(row, 0).text()
+            camera = entries[row].camera_id
+            self.table.item(row, 0).setText(camera)
             raw = self.table.item(row, 1).data(Qt.ItemDataRole.UserRole)
             if not raw:
                 missing.append(camera)
@@ -501,6 +588,9 @@ class TrackerWindow(QMainWindow):
         if not (self.csv_box.isChecked() or self.plot_box.isChecked() or self.video_box.isChecked()):
             QMessageBox.warning(self, "Прогон", "Выберите CSV, графики или видео.")
             return
+        self.log.clear()
+        if not self._save_catalog():
+            return
         try:
             assignments = self._assignments()
         except ValueError as exc:
@@ -512,7 +602,6 @@ class TrackerWindow(QMainWindow):
         except (OSError, ValueError, yaml.YAMLError) as exc:
             QMessageBox.critical(self, "Конфиг", str(exc))
             return
-        self.log.clear()
         self._note(f"В общий CSV: {', '.join(assignments)}")
         self.run_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
@@ -596,8 +685,8 @@ class TrackerWindow(QMainWindow):
 
 def _catalog() -> list[str]:
     try:
-        found = camera_ids(_CONFIG)
-    except (OSError, yaml.YAMLError, KeyError):
+        found = [entry.camera_id for entry in load_camera_entries(_CONFIG)]
+    except (OSError, yaml.YAMLError, KeyError, TypeError, ValueError):
         found = []
     return found or ["cam1", "cam2", "cam3", "cam4", "cam5"]
 
