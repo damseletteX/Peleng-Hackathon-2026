@@ -269,9 +269,7 @@ def _write_split(
     payload = {
         "info": {"description": "Peleng truck, RF-DETR nano"},
         "licenses": [],
-        "categories": [
-            {"id": TRUCK_CATEGORY_ID, "name": "truck", "supercategory": "vehicle"}
-        ],
+        "categories": [{"id": TRUCK_CATEGORY_ID, "name": "truck", "supercategory": "vehicle"}],
         "images": images,
         "annotations": annotations,
     }

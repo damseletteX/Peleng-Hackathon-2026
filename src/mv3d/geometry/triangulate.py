@@ -23,8 +23,10 @@ def triangulate_points(
     if len(cameras) != len(pixels) or len(cameras) < 2:
         raise ValueError("Для триангуляции нужны минимум две пары камера-точка.")
 
-    base = np.ones(len(cameras), dtype=np.float64) if weights is None else np.asarray(
-        weights, dtype=np.float64
+    base = (
+        np.ones(len(cameras), dtype=np.float64)
+        if weights is None
+        else np.asarray(weights, dtype=np.float64)
     )
     if base.shape != (len(cameras),):
         raise ValueError("Число весов должно совпадать с числом камер.")

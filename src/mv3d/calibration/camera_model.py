@@ -16,9 +16,7 @@ class CameraIntrinsics:
 
     def __post_init__(self) -> None:
         if self.width <= 0 or self.height <= 0:
-            raise ValueError(
-                "Ширина и высота изображения должны быть положительными."
-            )
+            raise ValueError("Ширина и высота изображения должны быть положительными.")
 
         values = np.array(
             [
@@ -30,14 +28,10 @@ class CameraIntrinsics:
         )
 
         if not np.all(np.isfinite(values)):
-            raise ValueError(
-                "Фокус и размеры сенсора должны быть конечными числами."
-            )
+            raise ValueError("Фокус и размеры сенсора должны быть конечными числами.")
 
         if np.any(values <= 0):
-            raise ValueError(
-                "Фокус и размеры сенсора должны быть положительными."
-            )
+            raise ValueError("Фокус и размеры сенсора должны быть положительными.")
 
     @property
     def K(self) -> np.ndarray:
@@ -192,9 +186,7 @@ def load_camera_from_csv(
     height: int = 720,
     focal_mm: float | None = None,
 ) -> Camera:
-    track = load_camera_track(
-        path, camera_id, width=width, height=height, focal_mm=focal_mm
-    )
+    track = load_camera_track(path, camera_id, width=width, height=height, focal_mm=focal_mm)
     if frame < 0 or frame >= len(track):
         raise ValueError(f"Кадр {frame} отсутствует в {Path(path).name}.")
     return track[frame]

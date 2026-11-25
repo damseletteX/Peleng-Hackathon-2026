@@ -242,9 +242,15 @@ class TrackerWindow(QMainWindow):
         files_col = QVBoxLayout(files)
         self.catalog_table = QTableWidget(0, 4)
         self.catalog_table.setHorizontalHeaderLabels(["Имя", "Калибровка", "Фокус, мм", ""])
-        self.catalog_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self.catalog_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        self.catalog_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self.catalog_table.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.ResizeMode.Stretch
+        )
+        self.catalog_table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.ResizeMode.ResizeToContents
+        )
+        self.catalog_table.horizontalHeader().setSectionResizeMode(
+            3, QHeaderView.ResizeMode.ResizeToContents
+        )
         self.catalog_table.verticalHeader().setVisible(False)
         self.catalog_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.catalog_table.setMinimumHeight(280)
@@ -287,8 +293,12 @@ class TrackerWindow(QMainWindow):
         self.table = QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(["Камера", "Файл", "", "FPS", "Кадры"])
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.ResizeMode.ResizeToContents
+        )
+        self.table.horizontalHeader().setSectionResizeMode(
+            2, QHeaderView.ResizeMode.ResizeToContents
+        )
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
@@ -487,7 +497,10 @@ class TrackerWindow(QMainWindow):
     def _sync_count_limit(self) -> None:
         count = max(self.catalog_table.rowCount(), 1)
         self.count_spin.setMaximum(count)
-        if self.catalog_table.rowCount() and self.count_spin.value() > self.catalog_table.rowCount():
+        if (
+            self.catalog_table.rowCount()
+            and self.count_spin.value() > self.catalog_table.rowCount()
+        ):
             self.count_spin.setValue(self.catalog_table.rowCount())
         self.catalog = [entry.camera_id for entry in self._catalog_entries()]
 
@@ -638,7 +651,9 @@ class TrackerWindow(QMainWindow):
                 continue
             rgb = np.ascontiguousarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
             height, width, channels = rgb.shape
-            picture = QImage(rgb.data, width, height, channels * width, QImage.Format.Format_RGB888).copy()
+            picture = QImage(
+                rgb.data, width, height, channels * width, QImage.Format.Format_RGB888
+            ).copy()
             label.setPixmap(
                 QPixmap.fromImage(picture).scaled(
                     label.size(),
@@ -699,7 +714,9 @@ class TrackerWindow(QMainWindow):
         return chosen
 
     def _start(self) -> None:
-        if not (self.csv_box.isChecked() or self.plot_box.isChecked() or self.video_box.isChecked()):
+        if not (
+            self.csv_box.isChecked() or self.plot_box.isChecked() or self.video_box.isChecked()
+        ):
             QMessageBox.warning(self, "Прогон", "Выберите CSV, графики или видео.")
             return
         self.log.clear()
@@ -797,7 +814,9 @@ class TrackerWindow(QMainWindow):
         )
         rgb = np.ascontiguousarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
         view_h, view_w, channels = rgb.shape
-        frame = QImage(rgb.data, view_w, view_h, channels * view_w, QImage.Format.Format_RGB888).copy()
+        frame = QImage(
+            rgb.data, view_w, view_h, channels * view_w, QImage.Format.Format_RGB888
+        ).copy()
         self.space_view.setPixmap(
             QPixmap.fromImage(frame).scaled(
                 self.space_view.size(),
@@ -923,9 +942,7 @@ class TrackerWindow(QMainWindow):
                 last = (frame, xyz)
         if last is not None:
             frame, xyz = last
-            self.coord_readout.setText(
-                f"Кадр {frame}    X={xyz[0]}   Y={xyz[1]}   Z={xyz[2]}"
-            )
+            self.coord_readout.setText(f"Кадр {frame}    X={xyz[0]}   Y={xyz[1]}   Z={xyz[2]}")
         self.coords.scrollToBottom()
 
     def resizeEvent(self, event) -> None:

@@ -30,12 +30,14 @@ htmlcov/
 .tox/
 .nox/
 coverage.xml/
+*.xml
 
 # Linters and type checkers
 .ruff_cache/
 .mypy_cache/
 .pytype/
 .pyre/
+
 
 # IDEs and editors
 .idea/

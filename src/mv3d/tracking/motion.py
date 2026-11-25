@@ -79,7 +79,7 @@ class TrajectoryFilter:
         assert self.p is not None
         observation = np.zeros((3, 6), dtype=np.float64)
         observation[0, 0] = observation[1, 1] = observation[2, 2] = 1.0
-        variance = (self.meas_std_cm ** 2) / max(weight, 1e-3)
+        variance = (self.meas_std_cm**2) / max(weight, 1e-3)
         noise = np.eye(3, dtype=np.float64) * variance
         innovation = _along_road(self.x, measurement - observation @ self.x)
         innovation_cov = observation @ self.p @ observation.T + noise
@@ -115,7 +115,7 @@ def _along_road(state: np.ndarray, innovation: np.ndarray) -> np.ndarray:
 
 
 def _process_noise(dt: float, accel_std: float) -> np.ndarray:
-    variance = accel_std ** 2
+    variance = accel_std**2
     dt2 = dt * dt
     dt3 = dt2 * dt
     dt4 = dt2 * dt2

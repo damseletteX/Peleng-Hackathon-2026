@@ -138,12 +138,36 @@ def _draw_floor(canvas, pixel, lo, hi, floor) -> None:
     for y in ys:
         line = np.array([[lo[0], y, floor], [hi[0], y, floor]])
         _polyline(canvas, pixel(line), color, 1)
-    cv2.putText(canvas, "X", tuple(pixel(np.array([[hi[0], lo[1], floor]]))[0].astype(int)),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (120, 160, 120), 1, cv2.LINE_AA)
-    cv2.putText(canvas, "Y", tuple(pixel(np.array([[lo[0], hi[1], floor]]))[0].astype(int)),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (120, 160, 120), 1, cv2.LINE_AA)
-    cv2.putText(canvas, "Z", tuple(pixel(np.array([[lo[0], lo[1], hi[2]]]))[0].astype(int)),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (120, 160, 120), 1, cv2.LINE_AA)
+    cv2.putText(
+        canvas,
+        "X",
+        tuple(pixel(np.array([[hi[0], lo[1], floor]]))[0].astype(int)),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.5,
+        (120, 160, 120),
+        1,
+        cv2.LINE_AA,
+    )
+    cv2.putText(
+        canvas,
+        "Y",
+        tuple(pixel(np.array([[lo[0], hi[1], floor]]))[0].astype(int)),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.5,
+        (120, 160, 120),
+        1,
+        cv2.LINE_AA,
+    )
+    cv2.putText(
+        canvas,
+        "Z",
+        tuple(pixel(np.array([[lo[0], lo[1], hi[2]]]))[0].astype(int)),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.5,
+        (120, 160, 120),
+        1,
+        cv2.LINE_AA,
+    )
 
 
 def _draw_truck(canvas, pixel, cloud: np.ndarray, index: int) -> None:
@@ -167,7 +191,20 @@ def _draw_truck(canvas, pixel, cloud: np.ndarray, index: int) -> None:
             xy = base[:2] + side * (sx * width) + forward * (fx * length)
             corners.append([xy[0], xy[1], base[2] + dz])
     screen = pixel(np.array(corners))
-    faces = [(0, 1), (1, 2), (2, 3), (3, 0), (4, 5), (5, 6), (6, 7), (7, 4), (0, 4), (1, 5), (2, 6), (3, 7)]
+    faces = [
+        (0, 1),
+        (1, 2),
+        (2, 3),
+        (3, 0),
+        (4, 5),
+        (5, 6),
+        (6, 7),
+        (7, 4),
+        (0, 4),
+        (1, 5),
+        (2, 6),
+        (3, 7),
+    ]
     for a, b in faces:
         p1 = tuple(screen[a].astype(int))
         p2 = tuple(screen[b].astype(int))
@@ -193,5 +230,12 @@ def _legend(canvas, names: list[str], width: int) -> None:
         label = name
         cv2.circle(canvas, (x + 8, y - 5), 5, color, -1, cv2.LINE_AA)
         cv2.putText(
-            canvas, label, (x + 22, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (210, 210, 210), 1, cv2.LINE_AA
+            canvas,
+            label,
+            (x + 22, y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (210, 210, 210),
+            1,
+            cv2.LINE_AA,
         )

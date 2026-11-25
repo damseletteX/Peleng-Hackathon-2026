@@ -100,9 +100,7 @@ def run_tracking(
         trackers = [make_truck_tracker(fps) for _ in sources]
         keepers = [BoxKeeper() for _ in sources]
         poses = [
-            load_camera_track(
-                source.calibration, source.camera_id, focal_mm=source.focal_mm
-            )
+            load_camera_track(source.calibration, source.camera_id, focal_mm=source.focal_mm)
             for source in sources
         ]
         motion = TrajectoryFilter()
@@ -133,9 +131,7 @@ def run_tracking(
                     dt,
                     draw=write_video,
                 )
-                measurement, weight, locked_id = _fuse(
-                    views, plane_z, motion.peek(dt), locked_id
-                )
+                measurement, weight, locked_id = _fuse(views, plane_z, motion.peek(dt), locked_id)
                 has_measurement = measurement is not None
                 position = motion.step(
                     measurement if has_measurement else None,
@@ -241,9 +237,7 @@ def _read_frames(captures: list[cv2.VideoCapture]) -> list[np.ndarray] | None:
     return frames
 
 
-def _observe(
-    images, sources, poses, trackers, keepers, detector, frame_id, motion, dt, draw: bool
-):
+def _observe(images, sources, poses, trackers, keepers, detector, frame_id, motion, dt, draw: bool):
     views: list[View] = []
     canvases: list[np.ndarray] = []
     predicted = motion.peek(dt)
@@ -370,7 +364,9 @@ def _views_for_fusion(
         ((_reprojection_px(view, predicted), view) for view in positive),
         key=lambda item: item[0],
     )
-    current = [view for error, view in ranked if view.camera_id == locked_id and error <= _REPROJ_PX]
+    current = [
+        view for error, view in ranked if view.camera_id == locked_id and error <= _REPROJ_PX
+    ]
     if current:
         primary = current[0]
     elif ranked[0][0] <= 50.0:
@@ -379,9 +375,7 @@ def _views_for_fusion(
     else:
         return [], locked_id
     extras = [
-        view
-        for error, view in ranked
-        if view.camera_id != primary.camera_id and error <= 40.0
+        view for error, view in ranked if view.camera_id != primary.camera_id and error <= 40.0
     ]
     return [primary, *extras], locked_id
 
@@ -547,9 +541,7 @@ def write_coordinate_plot(
         estimate = [(frame, float(point[axis])) for frame, point in usable]
         truth = [(frame, float(gt[frame][axis])) for frame, _ in usable if frame in gt]
         _draw_series(canvas, estimate, truth, frame_min, frame_max, top, panel - 8, width)
-        cv2.putText(
-            canvas, name, (8, top + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (40, 40, 40), 2
-        )
+        cv2.putText(canvas, name, (8, top + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (40, 40, 40), 2)
     cv2.imwrite(str(path), canvas)
 
 
@@ -639,7 +631,9 @@ def _write_videos(writers, canvases, sources, output, fps):
         if ready[index] is None:
             height, width = canvas.shape[:2]
             path = output / f"{source.camera_id}.mp4"
-            writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
+            writer = cv2.VideoWriter(
+                str(path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height)
+            )
             if not writer.isOpened():
                 raise RuntimeError(f"Не удалось создать {path}")
             ready[index] = writer
@@ -663,9 +657,7 @@ def _draw_box(canvas, box, label, color, held: bool) -> None:
     y1 = int(np.clip(y1, 0, height - 1))
     y2 = int(np.clip(y2, 0, height - 1))
     cv2.rectangle(canvas, (x1, y1), (x2, y2), color, 1 if held else 2)
-    cv2.putText(
-        canvas, label, (x1, max(22, y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2
-    )
+    cv2.putText(canvas, label, (x1, max(22, y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
 
 
 def _write_topdown(path: Path, trajectory: list[tuple[int, np.ndarray]]) -> None:

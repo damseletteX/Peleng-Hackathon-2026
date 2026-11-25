@@ -140,11 +140,7 @@ def _run_detect(args: argparse.Namespace) -> int:
             continue
         xyz = localize_detection([camera], [detection], plane_z=args.plane_z)
         weight, sharpness, visibility = observation_weight(frame, detection)
-        xyz_text = (
-            f"X={xyz[0]:.1f} Y={xyz[1]:.1f} Z={xyz[2]:.1f}"
-            if xyz is not None
-            else "3D=n/a"
-        )
+        xyz_text = f"X={xyz[0]:.1f} Y={xyz[1]:.1f} Z={xyz[2]:.1f}" if xyz is not None else "3D=n/a"
         print(
             f"frame={frame_index} {detection.label} score={detection.score:.2f} "
             f"w={weight:.3f} sharp={sharpness:.2f} vis={visibility:.2f} "

@@ -38,9 +38,7 @@ def test_write_run_config_keeps_calibration(tmp_path):
     data = yaml.safe_load(dest.read_text(encoding="utf-8"))
     assert list(data["cameras"]) == ["cam2"]
     assert data["cameras"]["cam2"]["video"] == str(video)
-    assert data["cameras"]["cam2"]["calibration"].endswith(
-        "object_transform_CineCameraActor2.csv"
-    )
+    assert data["cameras"]["cam2"]["calibration"].endswith("object_transform_CineCameraActor2.csv")
     assert data["object_plane_z_cm"] == 300.0
 
 

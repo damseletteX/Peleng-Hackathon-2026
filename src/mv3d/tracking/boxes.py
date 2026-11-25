@@ -162,12 +162,12 @@ def _area(box: np.ndarray) -> float:
     return float(max(0.0, box[2] - box[0]) * max(0.0, box[3] - box[1]))
 
 
-def _center_inside(outer: np.ndarray, inner: tuple[float, float, float, float], pad: float = 40.0) -> bool:
+def _center_inside(
+    outer: np.ndarray, inner: tuple[float, float, float, float], pad: float = 40.0
+) -> bool:
     cx = (inner[0] + inner[2]) / 2.0
     cy = (inner[1] + inner[3]) / 2.0
-    return bool(
-        outer[0] - pad <= cx <= outer[2] + pad and outer[1] - pad <= cy <= outer[3] + pad
-    )
+    return bool(outer[0] - pad <= cx <= outer[2] + pad and outer[1] - pad <= cy <= outer[3] + pad)
 
 
 def _iou(left: np.ndarray, right: np.ndarray) -> float:
